@@ -6,7 +6,7 @@ var WebGLPointLayer = L.CanvasLayer.extend({
 
         // # of records
         this._dataLength = 0;
-        // buffer of data for WebGL rendering,
+        // Buffer of data for WebGL rendering,
         // initial size 10M, can contain 2M records (each record occupies 5 cells)
         this._verts = new Float32Array(10000000);
         // Store points' IDs
@@ -14,7 +14,10 @@ var WebGLPointLayer = L.CanvasLayer.extend({
 
         this._initGL();
         this._initTextures();
+        // Current mouse over point's id, x, y
         this._cid = 0;
+        this._cx = 0;
+        this._cy = 0;
         // Twitter Blue
         this._pointColorX = 29 / 255.0;
         this._pointColorY = 161 / 255.0;
@@ -60,10 +63,18 @@ var WebGLPointLayer = L.CanvasLayer.extend({
      *  - Note: The maximum number of records supported is 16M,
      *          If # of rendered points exceeds 16M,
      *          this function will not work!
+     * @param e - event object from mousemove event
      * @returns int
      */
-    getCurrentPointID: function() {
-        if ( this._cid === 0 )
+    getCurrentPointID: function(e) {
+        // Verify the distance between current mouse point and this._cid point
+        var canvas = this.getCanvas();
+        var rect = canvas.getBoundingClientRect();
+        var cx = Math.floor(e.originalEvent.clientX - rect.left + 0.5);
+        var cy = Math.floor(e.originalEvent.clientY - rect.top + 0.5);
+        var distance = Math.sqrt((cx - this._cx)^2 + (cy - this._cy)^2);
+
+        if ( this._cid === 0 || distance > 4.0)
             return -1;
         else
             return this._pointsIDs[this._cid];
@@ -110,10 +121,9 @@ var WebGLPointLayer = L.CanvasLayer.extend({
 
         if ( id > 0 && id !== this._cid ) {
             this._cid = id;
+            this._cx = x;
+            this._cy = y;
             this.render();
-        }
-        else {
-            this._cid = 0;
         }
     },
 
