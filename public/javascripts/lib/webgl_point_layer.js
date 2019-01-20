@@ -63,10 +63,10 @@ var WebGLPointLayer = L.CanvasLayer.extend({
      * @returns int
      */
     getCurrentPointID: function() {
-        if ( this._cid == 0 )
+        if ( this._cid === 0 )
             return -1;
         else
-            return this._cid;
+            return this._pointsIDs[this._cid];
     },
 
 
@@ -111,6 +111,9 @@ var WebGLPointLayer = L.CanvasLayer.extend({
         if ( id > 0 && id !== this._cid ) {
             this._cid = id;
             this.render();
+        }
+        else {
+            this._cid = 0;
         }
     },
 
@@ -235,7 +238,7 @@ var WebGLPointLayer = L.CanvasLayer.extend({
             var pixel = this._LatLongToPixel_XY(deltaBuffer[i][0], deltaBuffer[i][1]);
 
             // id = r * 2^16 + g * 2^8 + b, [0, 2^24(16M)]
-            var id = this._dataLength;
+            var id = this._dataLength + 1; // index in _pointsIDs starts from 1
             var r = Math.floor(id / (65536));
             var g = Math.floor((id % (65536)) / 256);
             var b = id % 256;
