@@ -1,0 +1,28 @@
+@*
+ * This template takes a single argument, a String containing a
+ * message to display.
+ *@
+@(message: String)
+
+@*
+ * Call the `main` template with two arguments. The first
+ * argument is a `String` with the title of the page, the second
+ * argument is an `Html` object containing the body of the page.
+ *@
+@main("Welcome to Play") {
+
+    @*
+     * Get an `Html` object by calling the built-in Play welcome
+     * template and passing a `String` message.
+     *@
+    @* welcome(message, style = "scala") *@
+    <div xmlns="http://www.w3.org/1999/html" ng-controller="AppCtrl">
+        <div class="map-group">
+            <map lat="39.5" lng="-96.35" zoom="4"></map>
+        </div>
+
+        <div class="stats" ng-controller="CountCtrl">
+            {{resultCount}}
+        </div>
+    </div>
+}
