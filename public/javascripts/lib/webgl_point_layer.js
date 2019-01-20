@@ -9,6 +9,8 @@ var WebGLPointLayer = L.CanvasLayer.extend({
         // buffer of data for WebGL rendering,
         // initial size 10M, can contain 2M records (each record occupies 5 cells)
         this._verts = new Float32Array(10000000);
+        // Store points' IDs
+        this._pointsIDs = [];
 
         this._initGL();
         this._initTextures();
@@ -55,6 +57,9 @@ var WebGLPointLayer = L.CanvasLayer.extend({
     /**
      * getCurrentPointID
      *  - return the id of data at where mouse overs
+     *  - Note: The maximum number of records supported is 16M,
+     *          If # of rendered points exceeds 16M,
+     *          this function will not work!
      * @returns int
      */
     getCurrentPointID: function() {
@@ -226,16 +231,16 @@ var WebGLPointLayer = L.CanvasLayer.extend({
             delete _vertsTemp;
         }
 
-        for ( var i = 1; i <= deltaBuffer.length; ++i ) {
-            var pixel = this._LatLongToPixel_XY(deltaBuffer[i - 1][0], deltaBuffer[i - 1][1]);
+        for ( var i = 0; i < deltaBuffer.length; i ++ ) {
+            var pixel = this._LatLongToPixel_XY(deltaBuffer[i][0], deltaBuffer[i][1]);
 
-            // id = r + 256*g + 256^2*b
-            // id is up to 2^12 which is 1 billion
-            //var id = this._dataLength + 1;
-            var id = deltaBuffer[i - 1][2];
+            // id = r * 2^16 + g * 2^8 + b, [0, 2^24(16M)]
+            var id = this._dataLength;
             var r = Math.floor(id / (65536));
             var g = Math.floor((id % (65536)) / 256);
             var b = id % 256;
+
+            this._pointsIDs[id] = deltaBuffer[i][2];
 
             this._verts[5*this._dataLength    ] = pixel.x;
             this._verts[5*this._dataLength + 1] = pixel.y;
@@ -330,7 +335,7 @@ var WebGLPointLayer = L.CanvasLayer.extend({
         gl.viewport(0, 0, canvas.width, canvas.height);
 
         // Pass 1
-        // Draw the blue pinned points
+        // Draw the invisible image for encoding points' IDs
 
         gl.useProgram(this._programs[1]);
         gl.bindFramebuffer(this._gl.FRAMEBUFFER, this._fb);
@@ -348,7 +353,7 @@ var WebGLPointLayer = L.CanvasLayer.extend({
         }
 
         // Pass 2
-        // Compute the cursor location to pinned points/tweets map
+        // Draw the real visible points
 
         gl.useProgram(this._programs[0]);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
