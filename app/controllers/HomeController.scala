@@ -4,11 +4,11 @@ import javax.inject._
 import java.io.{File, FileInputStream}
 
 import play.api.mvc._
-import play.api.libs.json.{JsValue, Json, _}
+import play.api.libs.json.{JsValue}
 import play.api.libs.streams.ActorFlow
 import play.api.libs.ws.WSClient
 import play.api.{Configuration, Environment, Logger}
-import actor.PointsLoader
+import actor.DBConnector
 import akka.actor.ActorSystem
 import akka.stream.Materializer
 
@@ -39,7 +39,8 @@ class HomeController @Inject()(cc: ControllerComponents,
 
   def ws = WebSocket.accept[JsValue, JsValue] { request =>
     ActorFlow.actorRef { out =>
-      PointsLoader.props(out, pointsDataFile)
+      //PointsLoader.props(out, pointsDataFile)
+      DBConnector.props(out)
     }
   }
 }

@@ -14,13 +14,13 @@ class PointsLoader (val out: ActorRef, val pointsDataFile: File) extends Actor w
   override def receive: Receive = {
     case request : JsValue =>
       val offset = (request \ "offset").as[BigDecimal].intValue()
-      val size  = (request \ "size").as[BigDecimal].intValue()
+      val limit  = (request \ "limit").as[BigDecimal].intValue()
       logger.info("PoinstsLoader <== " + request.toString())
       System.out.println("PoinstsLoader <== " + request.toString())
       System.out.println("offset: " + offset)
-      System.out.println("size: " + size)
+      System.out.println("size: " + limit)
 
-      val delta = pointsData.value.slice(offset, offset + size)
+      val delta = pointsData.value.slice(offset, offset + limit)
       System.out.println(delta.slice(0,1))
 
       //out ! JsObject(Seq("OK" -> JsString(s"Get your request!")))

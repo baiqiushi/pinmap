@@ -1,15 +1,18 @@
-angular.module('pinmap.map', ['leaflet-directive'])
-    .controller('MapCtrl', function($scope, $timeout, leafletData) {
+angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
+    .controller("MapCtrl", function($scope, $timeout, leafletData, moduleManager) {
 
-        $scope.totalCount = 5000;
-        $scope.deltaCount = 500;
+        $scope.totalCount = 18199;
+        $scope.deltaCount = 18199;
         $scope.offset = 0;
+        $scope.keyword = "trump";
+        $scope.resultCount = 0;
 
         $scope.ws = new WebSocket("ws://" + location.host + "/ws");
         $scope.pinmapMapResul = [];
 
-        $scope.sendQuery = function() {
-            var query = {offset: $scope.offset, size: $scope.deltaCount};
+        $scope.sendQuery = function(keyword) {
+            $scope.keyword = keyword;
+            var query = {offset: $scope.offset, limit: $scope.deltaCount, keyword: $scope.keyword};
             $scope.ws.send(JSON.stringify(query));
             $scope.offset = $scope.offset + $scope.deltaCount;
         };
@@ -20,7 +23,8 @@ angular.module('pinmap.map', ['leaflet-directive'])
                 window.setTimeout($scope.waitForWS, 1000);
             }
             else {
-                $scope.sendQuery();
+                //$scope.sendQuery();
+                moduleManager.publishEvent(moduleManager.EVENT.WS_READY, {});
             }
         };
 
@@ -67,15 +71,19 @@ angular.module('pinmap.map', ['leaflet-directive'])
             });
 
             $scope.waitForWS();
+            moduleManager.subscribeEvent(moduleManager.EVENT.CHANGE_SEARCH_KEYWORD, function(e) {
+                $scope.sendQuery(e.keyword);
+            });
         };
 
         $scope.handleResult = function(resultSet) {
-
             if(angular.isArray(resultSet)) {
                 $scope.pinmapMapResult = resultSet;
-                //send next query
                 if ($scope.pinmapMapResult.length > 0) {
+                    $scope.resultCount += $scope.pinmapMapResult.length;
+                    moduleManager.publishEvent(moduleManager.EVENT.CHANGE_RESULT_COUNT, {resultCount: $scope.resultCount});
                     $scope.drawPinMap($scope.pinmapMapResult);
+                    //send next query
                     if ($scope.offset < $scope.totalCount) {
                         $scope.sendQuery();
                     }
@@ -125,14 +133,17 @@ angular.module('pinmap.map', ['leaflet-directive'])
             }
 
             //Update the points data
-            if (result.length > 0){
+            if (result.length > 0) {
                 $scope.points = [];
                 for (var i = 0; i < result.length; i++) {
-                    if (result[i].hasOwnProperty("coordinate")){
+                    if (result[i].hasOwnProperty("coordinate")) {
                         $scope.points.push([result[i].coordinate[1], result[i].coordinate[0], result[i].id]);
                     }
-                    else if (result[i].hasOwnProperty("place.bounding_box")){
+                    else if (result[i].hasOwnProperty("place.bounding_box")) {
                         $scope.points.push([$scope.rangeRandom(result[i].id, result[i]["place.bounding_box"][0][1], result[i]["place.bounding_box"][1][1]), $scope.rangeRandom(result[i].id + 79, result[i]["place.bounding_box"][0][0], result[i]["place.bounding_box"][1][0]), result[i].id]); // 79 is a magic number to avoid using the same seed for generating both the longitude and latitude.
+                    }
+                    else {
+                        $scope.points.push([result[i].y, result[i].x, result[i].id]);
                     }
                 }
                 $scope.pointsLayer.appendData($scope.points);
@@ -156,7 +167,11 @@ angular.module('pinmap.map', ['leaflet-directive'])
     });
 
 
-angular.module('pinmap.map')
-    .controller('CountCtrl', function($scope) {
+angular.module("pinmap.map")
+    .controller('CountCtrl', function($scope, moduleManager) {
         $scope.resultCount = 0;
+
+        moduleManager.subscribeEvent(moduleManager.EVENT.CHANGE_RESULT_COUNT, function(e) {
+            $scope.resultCount = e.resultCount;
+        })
     });
