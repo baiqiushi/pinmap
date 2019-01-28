@@ -1,20 +1,21 @@
 angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
     .controller("MapCtrl", function($scope, $timeout, leafletData, moduleManager) {
 
-        $scope.totalCount = 18199;
-        $scope.deltaCount = 18199;
         $scope.offset = 0;
-        $scope.keyword = "trump";
+        $scope.limit = 10000000; // 10M
+        $scope.keyword = "";
         $scope.resultCount = 0;
 
         $scope.ws = new WebSocket("ws://" + location.host + "/ws");
         $scope.pinmapMapResul = [];
 
         $scope.sendQuery = function(keyword) {
-            $scope.keyword = keyword;
-            var query = {offset: $scope.offset, limit: $scope.deltaCount, keyword: $scope.keyword};
-            $scope.ws.send(JSON.stringify(query));
-            $scope.offset = $scope.offset + $scope.deltaCount;
+            if (keyword && keyword !== $scope.keyword) {
+                $scope.keyword = keyword;
+                $scope.resultCount = 0;
+                var query = {offset: $scope.offset, limit: $scope.limit, keyword: $scope.keyword};
+                $scope.ws.send(JSON.stringify(query));
+            }
         };
 
         $scope.waitForWS = function() {
@@ -83,10 +84,6 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                     $scope.resultCount += $scope.pinmapMapResult.length;
                     moduleManager.publishEvent(moduleManager.EVENT.CHANGE_RESULT_COUNT, {resultCount: $scope.resultCount});
                     $scope.drawPinMap($scope.pinmapMapResult);
-                    //send next query
-                    if ($scope.offset < $scope.totalCount) {
-                        $scope.sendQuery();
-                    }
                 }
             }
         };
@@ -127,7 +124,7 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
             if (!$scope.pointsLayer) {
                 $scope.pointsLayer = new WebGLPointLayer();
                 $scope.pointsLayer.setPointSize(3);
-                $scope.pointsLayer.setPointColor(29, 161, 242);
+                $scope.pointsLayer.setPointColor(0, 0, 255);
                 $scope.map.addLayer($scope.pointsLayer);
                 $scope.points = [];
             }
@@ -146,8 +143,10 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                         $scope.points.push([result[i].y, result[i].x, result[i].id]);
                     }
                 }
-                $scope.pointsLayer.appendData($scope.points);
-                //$scope.pointsLayer.setData($scope.points);
+                //$scope.pointsLayer.appendData($scope.points);
+                console.log("drawing points size = " + $scope.points.length);
+                console.log($scope.points);
+                $scope.pointsLayer.setData($scope.points);
             }
         };
     })

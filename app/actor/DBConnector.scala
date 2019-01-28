@@ -50,17 +50,17 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
       var qJsonArray: JsArray = Json.arr()
       while (resultSet.next) {
         var rsJson: JsObject = Json.obj()
-        val x = resultSet.getBigDecimal(xColName)
-        val y = resultSet.getBigDecimal(yColName)
+        val x = resultSet.getDouble(xColName)
+        val y = resultSet.getDouble(yColName)
         val id = resultSet.getBigDecimal(idColName)
-        rsJson = rsJson ++ Json.obj(xColName -> JsNumber(x))
-        rsJson = rsJson ++ Json.obj(yColName -> JsNumber(y))
+        rsJson = rsJson ++ Json.obj(xColName -> JsNumber(BigDecimal.valueOf(x)))
+        rsJson = rsJson ++ Json.obj(yColName -> JsNumber(BigDecimal.valueOf(y)))
         rsJson = rsJson ++ Json.obj(idColName -> JsNumber(id))
         qJsonArray = qJsonArray :+ rsJson
       }
 
       //System.out.println("DBConnector ==> ")
-      //System.out.println(qJsonArray)
+      //System.out.println(qJsonArray.value.length)
 
       //out ! JsObject(Seq("OK" -> JsString(s"Get your request!")))
       out ! Json.toJson(qJsonArray)
