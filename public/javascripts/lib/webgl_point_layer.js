@@ -41,7 +41,9 @@ var WebGLPointLayer = L.CanvasLayer.extend({
      */
     setData: function(data) {
         if ( this._checkData(data) )
-            this._initBuffers(data);
+             return this._initBuffers(data);
+        else
+            return 0;
     },
 
 
@@ -228,7 +230,7 @@ var WebGLPointLayer = L.CanvasLayer.extend({
 
     _initBuffers: function(buffer) {
         this._dataLength = 0;
-        this._appendBuffers(buffer);
+        return this._appendBuffers(buffer);
     },
 
 
@@ -280,7 +282,7 @@ var WebGLPointLayer = L.CanvasLayer.extend({
         gl.vertexAttribPointer(this._programs[1].indexLoc, 3, gl.FLOAT, false, fsize*5, fsize*2);
         gl.enableVertexAttribArray(this._programs[1].indexLoc);
 
-        this.render();
+        return this.render();
     },
 
 
@@ -389,6 +391,8 @@ var WebGLPointLayer = L.CanvasLayer.extend({
         if ( this._dataLength > 0 ) {
             gl.drawArrays(gl.POINTS, 0, this._dataLength);
         }
+
+        return Date.now();
     },
 
 

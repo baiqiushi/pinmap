@@ -1,6 +1,19 @@
 angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
     .controller("MapCtrl", function($scope, $timeout, leafletData, moduleManager) {
 
+        $scope.times = [];
+        $scope.timestamps = {};
+        // $scope.tReqSentJS = 0;
+        // $scope.tReqReceivedScala = 0;
+        // $scope.tReqParsedScala = 0;
+        // $scope.tDBConnEstablishedScala = 0;
+        // $scope.tQueryResReceivedScala = 0;
+        // $scope.tQueryResParsedScala = 0;
+        // $scope.tQueryResSentScala = 0;
+        // $scope.tResReceivedJS = 0;
+        // $scope.tResParsedJS = 0;
+        // $scope.tResRenderedJS = 0;
+
         $scope.offset = 0;
         $scope.limit = 10000000; // 10M
         $scope.keyword = "";
@@ -14,8 +27,14 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                 $scope.keyword = keyword;
                 $scope.resultCount = 0;
                 var query = {offset: $scope.offset, limit: $scope.limit, keyword: $scope.keyword};
+                $scope.timestamps.tsReqSendJS = Date.now();
                 $scope.ws.send(JSON.stringify(query));
             }
+        };
+
+        $scope.sendCmd = function(command) {
+            var cmd = {cmd: command};
+            $scope.ws.send(JSON.stringify(cmd));
         };
 
         $scope.waitForWS = function() {
@@ -83,15 +102,48 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                 if ($scope.pinmapMapResult.length > 0) {
                     $scope.resultCount += $scope.pinmapMapResult.length;
                     moduleManager.publishEvent(moduleManager.EVENT.CHANGE_RESULT_COUNT, {resultCount: $scope.resultCount});
-                    $scope.drawPinMap($scope.pinmapMapResult);
+                    $scope.timestamps.tResRenderedJS = $scope.drawPinMap($scope.pinmapMapResult);
+
+                    //$scope.sendCmd("stopDB");
                 }
             }
         };
 
         $scope.ws.onmessage = function(event) {
             $timeout(function() {
-                var result = JSONbig.parse(event.data);
-                $scope.handleResult(result);
+                $scope.timestamps.tResReceivedJS = Date.now();
+
+                const response = JSONbig.parse(event.data);
+
+                $scope.timestamps.tResParsedJS = Date.now();
+
+                //console.log("ws.onmessage <= " + JSON.stringify(response));
+
+                $scope.timestamps.tReqReceivedScala = response.tReqR;
+                $scope.timestamps.tReqParsedScala = response.tReqP;
+                $scope.timestamps.tDBConnEstablishedScala = response.tDBCE;
+                $scope.timestamps.tQueryResReceivedScala = response.tQResR;
+                $scope.timestamps.tQueryResParsedScala = response.tQResP;
+                $scope.timestamps.tQueryResSentScala = response.tQResS;
+
+                $scope.handleResult(response.data);
+
+                $scope.timestamps.keyword = $scope.keyword;
+                $scope.times = [
+                    $scope.keyword, // keyword
+                    $scope.timestamps.tReqReceivedScala - $scope.timestamps.tsReqSendJS, // T1
+                    $scope.timestamps.tReqParsedScala - $scope.timestamps.tReqReceivedScala, // T2
+                    $scope.timestamps.tDBConnEstablishedScala - $scope.timestamps.tReqParsedScala, // T3
+                    $scope.timestamps.tQueryResReceivedScala - $scope.timestamps.tDBConnEstablishedScala, // T4+T5
+                    $scope.timestamps.tQueryResParsedScala - $scope.timestamps.tQueryResReceivedScala, // T6
+                    $scope.timestamps.tResReceivedJS - $scope.timestamps.tQueryResSentScala, // T7
+                    $scope.timestamps.tResParsedJS - $scope.timestamps.tResReceivedJS, // T8
+                    $scope.timestamps.tResRenderedJS - $scope.timestamps.tResParsedJS, // T9
+                    $scope.timestamps.tResReceivedJS - $scope.timestamps.tsReqSendJS // T1 + T2 + ... + T7
+                ];
+
+                console.log(JSON.stringify($scope.timestamps));
+                console.log(JSON.stringify($scope.times));
             });
         };
 
@@ -145,9 +197,11 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                 }
                 //$scope.pointsLayer.appendData($scope.points);
                 console.log("drawing points size = " + $scope.points.length);
-                console.log($scope.points);
-                $scope.pointsLayer.setData($scope.points);
+                //console.log($scope.points);
+                return $scope.pointsLayer.setData($scope.points);
             }
+
+            return 0;
         };
     })
     .directive("map", function () {
