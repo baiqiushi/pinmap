@@ -6,6 +6,8 @@ import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import play.api.Logger
 import play.api.libs.json._
 
+import scala.collection.mutable.ListBuffer
+
 class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
   private val logger = Logger("client")
 
@@ -38,7 +40,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           }
           out ! Json.toJson(Json.obj("cmd" -> command) ++ Json.obj("status" -> "ok"))
         // Query
-        case None =>
+        case _ =>
 
           val t1: Long = System.currentTimeMillis // t1 - request received
 
@@ -72,52 +74,117 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
 
           System.out.println("[DBConnector] DB done. T4 + T5 =  " + (t5 - t3)/1000.0 + "s")
 
-          var resultJsonArray: JsArray = Json.arr()
           //var i = 0
           var T6_1 = 0.0
           var T6_2 = 0.0
-          while (resultSet.next) {
-            //System.out.println("looping resultset :" + i)
-            //i += 1
 
-            val t6_0 = System.currentTimeMillis // t6_0 - before get column
+          // Two ways to return result
+          (request \ "byArray").asOpt[Boolean] match {
 
-            val x = resultSet.getDouble(xColName)
-            val y = resultSet.getDouble(yColName)
-            val id = resultSet.getBigDecimal(idColName)
+            case Some(true) =>
+              // Return result by array - all coordinates of all records in one array
 
-            val t6_1 = System.currentTimeMillis // t6_1 - column value got
+              var coordinates: ListBuffer[Array[Double]] = new ListBuffer[Array[Double]]
+              var ids: ListBuffer[Long] = new ListBuffer[Long]
+              while (resultSet.next) {
 
-            val recordJson = Json.obj(
-              xColName -> BigDecimal.valueOf(x),
-              yColName -> BigDecimal.valueOf(y),
-              idColName -> JsNumber(id)
-            )
-            resultJsonArray = resultJsonArray :+ recordJson
+                val t6_0 = System.currentTimeMillis // t6_0 - before get column
 
-            val t6_2 = System.currentTimeMillis // t6_2 - json object created
+                val x = resultSet.getDouble(xColName)
+                val y = resultSet.getDouble(yColName)
+                val id = resultSet.getLong(idColName)
 
-            T6_1 += t6_1 - t6_0
-            T6_2 += t6_2 - t6_1
+                val t6_1 = System.currentTimeMillis // t6_1 - column value got
+
+                coordinates.append(Array(x, y))
+                ids.append(id)
+
+                val t6_2 = System.currentTimeMillis // t6_2 - json object created
+
+                T6_1 += t6_1 - t6_0
+                T6_2 += t6_2 - t6_1
+              }
+
+              val t6_1 = System.currentTimeMillis // t6_1 - before json create
+
+              val data: JsObject = Json.obj("length" -> coordinates.length,
+                "coordinates" -> coordinates,
+                "ids" -> ids,
+                "byArray" -> true
+              )
+
+              val t6_2 = System.currentTimeMillis // t6_2 - json object created
+
+              T6_2 += t6_2 - t6_1
+
+              val t6: Long = System.currentTimeMillis // t6 - json built
+
+              System.out.println("[DBConnector] JSON done. T6 = " + (t6 - t5)/1000.0 + "s")
+              System.out.println("[DBConnector] In T6, get value  T6_1 = " + T6_1/1000.0 + "s")
+              System.out.println("[DBConnector] In T6, build json T6_2 = " + T6_2/1000.0 + "s")
+              //System.out.println(resultJsonArray.value.length)
+
+              val responseJson: JsObject = Json.obj("data" -> data,
+                "t1" -> JsNumber(t1),
+                "T2" -> JsNumber(t2 - t1),
+                "T3" -> JsNumber(t3 - t2),
+                "T45" -> JsNumber(t5 - t3),
+                "T6" -> JsNumber(t6 - t5),
+                "t6" -> JsNumber(t6)
+              )
+              //System.out.println(responseJson)
+              out ! Json.toJson(responseJson)
+
+
+            case _ => // Return result by JSON
+
+              var resultJsonArray: JsArray = Json.arr()
+              //var i = 0
+              var T6_1 = 0.0
+              var T6_2 = 0.0
+              while (resultSet.next) {
+                //System.out.println("looping resultset :" + i)
+                //i += 1
+
+                val t6_0 = System.currentTimeMillis // t6_0 - before get column
+
+                val x = resultSet.getDouble(xColName)
+                val y = resultSet.getDouble(yColName)
+                val id = resultSet.getBigDecimal(idColName)
+
+                val t6_1 = System.currentTimeMillis // t6_1 - column value got
+
+                val recordJson = Json.obj(
+                  xColName -> BigDecimal.valueOf(x),
+                  yColName -> BigDecimal.valueOf(y),
+                  idColName -> JsNumber(id)
+                )
+                resultJsonArray = resultJsonArray :+ recordJson
+
+                val t6_2 = System.currentTimeMillis // t6_2 - json object created
+
+                T6_1 += t6_1 - t6_0
+                T6_2 += t6_2 - t6_1
+              }
+
+              val t6: Long = System.currentTimeMillis // t6 - json built
+
+              System.out.println("[DBConnector] JSON done. T6 = " + (t6 - t5)/1000.0 + "s")
+              System.out.println("[DBConnector] In T6, get value  T6_1 = " + T6_1/1000.0 + "s")
+              System.out.println("[DBConnector] In T6, build json T6_2 = " + T6_2/1000.0 + "s")
+              //System.out.println(resultJsonArray.value.length)
+
+              val responseJson: JsObject = Json.obj("data" -> resultJsonArray,
+                "t1" -> JsNumber(t1),
+                "T2" -> JsNumber(t2 - t1),
+                "T3" -> JsNumber(t3 - t2),
+                "T45" -> JsNumber(t5 - t3),
+                "T6" -> JsNumber(t6 - t5),
+                "t6" -> JsNumber(t6)
+              )
+
+              out ! Json.toJson(responseJson)
           }
-
-          val t6: Long = System.currentTimeMillis // t6 - json built
-
-          System.out.println("[DBConnector] JSON done. T6 = " + (t6 - t5)/1000.0 + "s")
-          System.out.println("[DBConnector] In T6, get value  T6_1 = " + T6_1/1000.0 + "s")
-          System.out.println("[DBConnector] In T6, build json T6_2 = " + T6_2/1000.0 + "s")
-          //System.out.println(resultJsonArray.value.length)
-
-          val responseJson: JsObject = Json.obj("data" -> resultJsonArray,
-            "t1" -> JsNumber(t1),
-            "T2" -> JsNumber(t2 - t1),
-            "T3" -> JsNumber(t3 - t2),
-            "T45" -> JsNumber(t5 - t3),
-            "T6" -> JsNumber(t6 - t5),
-            "t6" -> JsNumber(t6)
-          )
-
-          out ! Json.toJson(responseJson)
       }
   }
 
