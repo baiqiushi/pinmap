@@ -3,16 +3,6 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
 
         $scope.times = [];
         $scope.timestamps = {};
-        // $scope.tReqSentJS = 0;
-        // $scope.tReqReceivedScala = 0;
-        // $scope.tReqParsedScala = 0;
-        // $scope.tDBConnEstablishedScala = 0;
-        // $scope.tQueryResReceivedScala = 0;
-        // $scope.tQueryResParsedScala = 0;
-        // $scope.tQueryResSentScala = 0;
-        // $scope.tResReceivedJS = 0;
-        // $scope.tResParsedJS = 0;
-        // $scope.tResRenderedJS = 0;
 
         $scope.offset = 0;
         $scope.limit = 10000000; // 10M
@@ -27,7 +17,7 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                 $scope.keyword = keyword;
                 $scope.resultCount = 0;
                 var query = {offset: $scope.offset, limit: $scope.limit, keyword: $scope.keyword};
-                $scope.timestamps.tsReqSendJS = Date.now();
+                $scope.timestamps.t0 = Date.now();
                 $scope.ws.send(JSON.stringify(query));
             }
         };
@@ -102,7 +92,7 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                 if ($scope.pinmapMapResult.length > 0) {
                     $scope.resultCount += $scope.pinmapMapResult.length;
                     moduleManager.publishEvent(moduleManager.EVENT.CHANGE_RESULT_COUNT, {resultCount: $scope.resultCount});
-                    $scope.timestamps.tResRenderedJS = $scope.drawPinMap($scope.pinmapMapResult);
+                    $scope.timestamps.t9 = $scope.drawPinMap($scope.pinmapMapResult);
 
                     //$scope.sendCmd("stopDB");
                 }
@@ -111,35 +101,35 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
 
         $scope.ws.onmessage = function(event) {
             $timeout(function() {
-                $scope.timestamps.tResReceivedJS = Date.now();
+                $scope.timestamps.t7 = Date.now();
 
                 const response = JSONbig.parse(event.data);
 
-                $scope.timestamps.tResParsedJS = Date.now();
+                $scope.timestamps.t8 = Date.now();
 
                 //console.log("ws.onmessage <= " + JSON.stringify(response));
 
-                $scope.timestamps.tReqReceivedScala = response.tReqR;
-                $scope.timestamps.tReqParsedScala = response.tReqP;
-                $scope.timestamps.tDBConnEstablishedScala = response.tDBCE;
-                $scope.timestamps.tQueryResReceivedScala = response.tQResR;
-                $scope.timestamps.tQueryResParsedScala = response.tQResP;
-                $scope.timestamps.tQueryResSentScala = response.tQResS;
+                $scope.timestamps.t1 = response.t1;
+                $scope.timestamps.T2 = response.T2;
+                $scope.timestamps.T3 = response.T3;
+                $scope.timestamps.T45 = response.T45;
+                $scope.timestamps.T6 = response.T6;
+                $scope.timestamps.t6 = response.t6;
 
                 $scope.handleResult(response.data);
 
                 $scope.timestamps.keyword = $scope.keyword;
                 $scope.times = [
                     $scope.keyword, // keyword
-                    $scope.timestamps.tReqReceivedScala - $scope.timestamps.tsReqSendJS, // T1
-                    $scope.timestamps.tReqParsedScala - $scope.timestamps.tReqReceivedScala, // T2
-                    $scope.timestamps.tDBConnEstablishedScala - $scope.timestamps.tReqParsedScala, // T3
-                    $scope.timestamps.tQueryResReceivedScala - $scope.timestamps.tDBConnEstablishedScala, // T4+T5
-                    $scope.timestamps.tQueryResParsedScala - $scope.timestamps.tQueryResReceivedScala, // T6
-                    $scope.timestamps.tResReceivedJS - $scope.timestamps.tQueryResSentScala, // T7
-                    $scope.timestamps.tResParsedJS - $scope.timestamps.tResReceivedJS, // T8
-                    $scope.timestamps.tResRenderedJS - $scope.timestamps.tResParsedJS, // T9
-                    $scope.timestamps.tResReceivedJS - $scope.timestamps.tsReqSendJS // T1 + T2 + ... + T7
+                    $scope.timestamps.t1 - $scope.timestamps.t0, // T1
+                    $scope.timestamps.T2, // T2
+                    $scope.timestamps.T3, // T3
+                    $scope.timestamps.T45, // T4+T5
+                    $scope.timestamps.T6, // T6
+                    $scope.timestamps.t7 - $scope.timestamps.t6, // T7
+                    $scope.timestamps.t8 - $scope.timestamps.t7, // T8
+                    $scope.timestamps.t9 - $scope.timestamps.t8, // T9
+                    $scope.timestamps.t7 - $scope.timestamps.t0 // T1 + T2 + ... + T7
                 ];
 
                 console.log(JSON.stringify($scope.timestamps));
