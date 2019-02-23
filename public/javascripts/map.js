@@ -1,8 +1,11 @@
 angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
     .controller("MapCtrl", function($scope, $timeout, leafletData, moduleManager) {
 
+        $scope.times = [];
+        $scope.timestamps = {};
+
         $scope.offset = 0;
-        $scope.limit = 10000000; // 10M
+        $scope.limit = 200000; // 10M
         $scope.keyword = "";
         $scope.resultCount = 0;
 
@@ -13,9 +16,15 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
             if (keyword && keyword !== $scope.keyword) {
                 $scope.keyword = keyword;
                 $scope.resultCount = 0;
-                var query = {offset: $scope.offset, limit: $scope.limit, keyword: $scope.keyword};
+                var query = {offset: $scope.offset, limit: $scope.limit, keyword: $scope.keyword, byArray: true};
+                $scope.timestamps.t0 = Date.now();
                 $scope.ws.send(JSON.stringify(query));
             }
+        };
+
+        $scope.sendCmd = function(command) {
+            var cmd = {cmd: command};
+            $scope.ws.send(JSON.stringify(cmd));
         };
 
         $scope.waitForWS = function() {
@@ -78,20 +87,51 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
         };
 
         $scope.handleResult = function(resultSet) {
-            if(angular.isArray(resultSet)) {
+            if(resultSet.length > 0) {
                 $scope.pinmapMapResult = resultSet;
-                if ($scope.pinmapMapResult.length > 0) {
-                    $scope.resultCount += $scope.pinmapMapResult.length;
-                    moduleManager.publishEvent(moduleManager.EVENT.CHANGE_RESULT_COUNT, {resultCount: $scope.resultCount});
-                    $scope.drawPinMap($scope.pinmapMapResult);
-                }
+                $scope.resultCount += $scope.pinmapMapResult.length;
+                moduleManager.publishEvent(moduleManager.EVENT.CHANGE_RESULT_COUNT, {resultCount: $scope.resultCount});
+                $scope.timestamps.t9 = $scope.drawPinMap($scope.pinmapMapResult);
+
+                //$scope.sendCmd("stopDB");
             }
         };
 
         $scope.ws.onmessage = function(event) {
             $timeout(function() {
-                var result = JSONbig.parse(event.data);
-                $scope.handleResult(result);
+                $scope.timestamps.t7 = Date.now();
+
+                const response = JSONbig.parse(event.data);
+
+                $scope.timestamps.t8 = Date.now();
+
+                //console.log("ws.onmessage <= " + JSON.stringify(response));
+
+                $scope.timestamps.t1 = response.t1;
+                $scope.timestamps.T2 = response.T2;
+                $scope.timestamps.T3 = response.T3;
+                $scope.timestamps.T45 = response.T45;
+                $scope.timestamps.T6 = response.T6;
+                $scope.timestamps.t6 = response.t6;
+
+                $scope.handleResult(response.data);
+
+                $scope.timestamps.keyword = $scope.keyword;
+                $scope.times = [
+                    $scope.keyword, // keyword
+                    $scope.timestamps.t1 - $scope.timestamps.t0, // T1
+                    $scope.timestamps.T2, // T2
+                    $scope.timestamps.T3, // T3
+                    $scope.timestamps.T45, // T4+T5
+                    $scope.timestamps.T6, // T6
+                    $scope.timestamps.t7 - $scope.timestamps.t6, // T7
+                    $scope.timestamps.t8 - $scope.timestamps.t7, // T8
+                    $scope.timestamps.t9 - $scope.timestamps.t8, // T9
+                    $scope.timestamps.t7 - $scope.timestamps.t0 // T1 + T2 + ... + T7
+                ];
+
+                console.log(JSON.stringify($scope.timestamps));
+                console.log(JSON.stringify($scope.times));
             });
         };
 
@@ -131,23 +171,41 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
 
             //Update the points data
             if (result.length > 0) {
-                $scope.points = [];
-                for (var i = 0; i < result.length; i++) {
-                    if (result[i].hasOwnProperty("coordinate")) {
-                        $scope.points.push([result[i].coordinate[1], result[i].coordinate[0], result[i].id]);
+                // (1) returned by array - all coordinates of all records in one array
+                if (result.byArray) {
+                    var coordinates = result.coordinates;
+                    var ids = result.ids;
+                    $scope.points = [];
+                    for (var i = 0; i < result.length; i++) {
+                        $scope.points.push([coordinates[i][1], coordinates[i][0], ids[i]]);
                     }
-                    else if (result[i].hasOwnProperty("place.bounding_box")) {
-                        $scope.points.push([$scope.rangeRandom(result[i].id, result[i]["place.bounding_box"][0][1], result[i]["place.bounding_box"][1][1]), $scope.rangeRandom(result[i].id + 79, result[i]["place.bounding_box"][0][0], result[i]["place.bounding_box"][1][0]), result[i].id]); // 79 is a magic number to avoid using the same seed for generating both the longitude and latitude.
-                    }
-                    else {
-                        $scope.points.push([result[i].y, result[i].x, result[i].id]);
-                    }
+                    //$scope.pointsLayer.appendData($scope.points);
+                    console.log("drawing points size = " + $scope.points.length);
+                    //console.log($scope.points);
+                    return $scope.pointsLayer.setData($scope.points);
                 }
-                //$scope.pointsLayer.appendData($scope.points);
-                console.log("drawing points size = " + $scope.points.length);
-                console.log($scope.points);
-                $scope.pointsLayer.setData($scope.points);
+                // (2) returned by json - each record in one json object
+                else {
+                    $scope.points = [];
+                    for (let i = 0; i < result.length; i++) {
+                        if (result[i].hasOwnProperty("coordinate")) {
+                            $scope.points.push([result[i].coordinate[1], result[i].coordinate[0], result[i].id]);
+                        }
+                        else if (result[i].hasOwnProperty("place.bounding_box")) {
+                            $scope.points.push([$scope.rangeRandom(result[i].id, result[i]["place.bounding_box"][0][1], result[i]["place.bounding_box"][1][1]), $scope.rangeRandom(result[i].id + 79, result[i]["place.bounding_box"][0][0], result[i]["place.bounding_box"][1][0]), result[i].id]); // 79 is a magic number to avoid using the same seed for generating both the longitude and latitude.
+                        }
+                        else {
+                            $scope.points.push([result[i].y, result[i].x, result[i].id]);
+                        }
+                    }
+                    //$scope.pointsLayer.appendData($scope.points);
+                    console.log("drawing points size = " + $scope.points.length);
+                    //console.log($scope.points);
+                    return $scope.pointsLayer.setData($scope.points);
+                }
             }
+
+            return 0;
         };
     })
     .directive("map", function () {
