@@ -5,7 +5,7 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
         $scope.timestamps = {};
 
         $scope.offset = 0;
-        $scope.limit = 10000000; // 10M
+        $scope.limit = 200000; // 10M
         $scope.keyword = "";
         $scope.resultCount = 0;
 
