@@ -41,8 +41,6 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           val t1: Long = System.currentTimeMillis // t1 - request received
 
           // 1 Parse query JSON
-          val mode: Option[String] = (request \ "mode").asOpt[String] // offset, interval
-          val sliceInterval: Option[Int] = (request \ "sliceInterval").asOpt[Int] // offset, # of days
           val keyword: String = (request \ "keyword").as[String]
           val start: Option[DateTime] = (request \ "start").asOpt[String] match {
             case Some(s) => Some(dateTimeFormat.parseDateTime(s))
@@ -54,49 +52,47 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           }
           val offset: Option[Int] = (request \ "offset").asOpt[Int]
           val limit: Option[Int] = (request \ "limit").asOpt[Int]
+          val mode: Option[String] = (request \ "mode").asOpt[String] // offset, interval
+          val sliceInterval: Option[Int] = (request \ "sliceInterval").asOpt[Int] // offset, # of days
+
+          val sqlTemplate: String = genSQLTemplate(keyword, start, end, offset, limit, mode)
 
           val t2: Long = System.currentTimeMillis // t2 - request parsed
 
-          /*System.out.println("DBConnector <== " + request.toString())
-          System.out.println("offset: " + offset)
-          System.out.println("size: " + limit)
-          System.out.println("keyword: " + keyword)*/
-
-          // 2 Query DB with query arguments
+          // 2 Establish connection to DB with prepared statement
           Class.forName(driver)
           val connection: Connection = DriverManager.getConnection(url, username, password)
-
-          val sqlTemplate: String = genSQLTemplate(mode, keyword, start, end, offset, limit)
-
           val preparedStatement: PreparedStatement = connection.prepareStatement(sqlTemplate)
 
-          var resultSet: ResultSet = null
+          val t3: Long = System.currentTimeMillis // t3 - db connected
 
+          // 3 Rewrite query for slicing queries and run the query
+          var resultSet: ResultSet = null
           var done: Boolean = false
           var thisInterval: Option[Interval] = None
-          var thisOffset: Option[Int] = offset
-
+          var thisOffset: Option[Int] = Option(0)
           do {
-
-            val (isDone, nextInterval, nextOffset) = rewriteQuery(preparedStatement, keyword, mode,
-              sliceInterval, start, end, thisInterval, thisOffset, limit)
+            // Rewrite query
+            val (isDone, nextInterval, nextOffset) = rewriteQuery(preparedStatement, keyword, start, end,
+              offset, limit, mode, sliceInterval, thisInterval, thisOffset)
             done = isDone
             thisInterval = nextInterval
             thisOffset = nextOffset
 
-            val t3: Long = System.currentTimeMillis // t3 - db connected
+            val t4: Long = System.currentTimeMillis // t4 - send db query
 
             resultSet = preparedStatement.executeQuery()
 
             val t5: Long = System.currentTimeMillis // t5 - db result
 
-            System.out.println("[DBConnector] DB done. T4 + T5 =  " + (t5 - t3) / 1000.0 + "s")
+            println("[DBConnector] DB done. T4 + T5 =  " + (t5 - t4) / 1000.0 + "s")
 
-            //System.out.println("DBConnector ==> SQL")
-            //System.out.println(preparedStatement)
+            //println("DBConnector ==> SQL")
+            //println(preparedStatement)
+            //println()
 
             // Two ways to return result
-            val data = (request \ "byArray").asOpt[Boolean] match {
+            val (data, length) = (request \ "byArray").asOpt[Boolean] match {
 
               case Some(true) =>
                 // Return result by array - all coordinates of all records in one array
@@ -108,25 +104,34 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
             }
 
             val t6 = System.currentTimeMillis()
-            System.out.println("[DBConnector] JSON done. T6 = " + (t6 - t5) / 1000.0 + "s")
+            println("[DBConnector] JSON done. T6 = " + (t6 - t5) / 1000.0 + "s")
 
             val responseJson: JsObject = Json.obj("data" -> data,
               "t1" -> JsNumber(t1),
               "T2" -> JsNumber(t2 - t1),
               "T3" -> JsNumber(t3 - t2),
-              "T45" -> JsNumber(t5 - t3),
+              "T45" -> JsNumber(t5 - t4),
               "T6" -> JsNumber(t6 - t5),
               "t6" -> JsNumber(t6)
             )
-            //System.out.println(responseJson)
             out ! Json.toJson(responseJson)
 
+            println("result length = " + length)
+
+            if (!mode.isEmpty) {
+              if(mode.get.toString == "offset" && length < sliceInterval.get.intValue) {
+                done = true
+              }
+            }
+
           } while (!done)
+
+          println("[DBConnector] ==> Query Done!")
       }
   }
 
-  private def genSQLTemplate(mode: Option[String], keyword: String, start: Option[DateTime], end: Option[DateTime],
-                             offset: Option[Int], limit: Option[Int]) : String = {
+  private def genSQLTemplate(keyword: String, start: Option[DateTime], end: Option[DateTime],
+                             offset: Option[Int], limit: Option[Int], mode: Option[String]) : String = {
     var sqlTemplate: String =
       s"""
          |select x, y, id
@@ -134,15 +139,22 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
          | where to_tsvector('english',text)@@to_tsquery('english',?)
      """.stripMargin
 
+    if (!start.isEmpty)
+      sqlTemplate += " and create_at >= ?"
+    if (!end.isEmpty)
+      sqlTemplate +=" and create_at < ?"
+
     mode match {
       case Some(sliceMode) =>
         //TODO - if slicing mode, concatenate the sql template string
-        ???
+         sliceMode match {
+           case "offset" =>
+             sqlTemplate += " offset ?"
+             sqlTemplate += " limit ?"
+           case "interval" =>
+             ???
+         }
       case None =>
-        if (!start.isEmpty)
-          sqlTemplate += " and create_at >= ?"
-        if (!end.isEmpty)
-          sqlTemplate +=" and create_at < ?"
         if (!offset.isEmpty)
           sqlTemplate += " offset ?"
         if (!limit.isEmpty)
@@ -152,47 +164,59 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
     sqlTemplate
   }
 
-  private def rewriteQuery(preparedStatement: PreparedStatement, keyword: String, mode: Option[String],
-                           sliceInterval: Option[Int], start: Option[DateTime], end: Option[DateTime],
-                           thisInterval: Option[Interval], thisOffset: Option[Int],
-                           limit: Option[Int]): (Boolean, Option[Interval], Option[Int]) = {
+  private def rewriteQuery(preparedStatement: PreparedStatement, keyword: String,
+                           start: Option[DateTime], end: Option[DateTime],
+                           offset: Option[Int], limit: Option[Int],
+                           mode: Option[String], sliceInterval: Option[Int],
+                           thisInterval: Option[Interval], thisOffset: Option[Int]):
+  (Boolean, Option[Interval], Option[Int]) = {
+    var pIndex = 1
+    preparedStatement.setString(pIndex, keyword)
+    pIndex += 1
+    if (!start.isEmpty) {
+      preparedStatement.setString(pIndex, dateTimeFormat.print(start.get))
+      pIndex += 1
+    }
+    if (!end.isEmpty) {
+      preparedStatement.setString(pIndex, dateTimeFormat.print(end.get))
+      pIndex += 1
+    }
+
     mode match {
       case Some(sliceMode) =>
         //TODO - if slicing mode, determine the nextInterval or nextOffset
-        ???
+        sliceMode match {
+          case "offset" =>
+            preparedStatement.setInt(pIndex, thisOffset.get)
+            pIndex += 1
+            preparedStatement.setInt(pIndex, sliceInterval.get)
+            pIndex += 1
+            (false, thisInterval, Option(thisOffset.get + sliceInterval.get))
+          case "interval" =>
+            ???
+        }
       case None => // no slice
-        var pIndex = 1
-        preparedStatement.setString(pIndex, keyword)
-        pIndex += 1
-        if (!start.isEmpty) {
-          preparedStatement.setString(pIndex, dateTimeFormat.print(start.get))
-          pIndex += 1
-        }
-        if (!end.isEmpty) {
-          preparedStatement.setString(pIndex, dateTimeFormat.print(end.get))
-          pIndex += 1
-        }
-        if (!thisOffset.isEmpty) {
-          preparedStatement.setInt(pIndex, thisOffset.get)
+        if (!offset.isEmpty) {
+          preparedStatement.setInt(pIndex, offset.get)
           pIndex += 1
         }
         if (!limit.isEmpty) {
           preparedStatement.setInt(pIndex, limit.get)
           pIndex += 1
         }
-
         (true, thisInterval, thisOffset)
     }
   }
 
-  private def genDataByArray(resultSet: ResultSet): JsObject = {
+  private def genDataByArray(resultSet: ResultSet): (JsObject, Int) = {
 
     var T6_1 = 0.0
     var T6_2 = 0.0
-
+    var length = 0
     val coordinates: ListBuffer[Array[Double]] = new ListBuffer[Array[Double]]
     val ids: ListBuffer[Long] = new ListBuffer[Long]
     while (resultSet.next) {
+      length += 1
 
       val t6_0 = System.currentTimeMillis // t6_0 - before get column
 
@@ -223,19 +247,21 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
 
     T6_2 += t6_2 - t6_1
 
-    System.out.println("[DBConnector] In T6, get value  T6_1 = " + T6_1/1000.0 + "s")
-    System.out.println("[DBConnector] In T6, build json T6_2 = " + T6_2/1000.0 + "s")
+    //println("[DBConnector] In T6, get value  T6_1 = " + T6_1/1000.0 + "s")
+    //println("[DBConnector] In T6, build json T6_2 = " + T6_2/1000.0 + "s")
 
-    data
+    (data, length)
   }
 
-  private def genDataByJson(resultSet: ResultSet): JsArray = {
+  private def genDataByJson(resultSet: ResultSet): (JsArray, Int) = {
 
     var resultJsonArray: JsArray = Json.arr()
 
     var T6_1 = 0.0
     var T6_2 = 0.0
+    var length = 0
     while (resultSet.next) {
+      length += 1
 
       val t6_0 = System.currentTimeMillis // t6_0 - before get column
 
@@ -258,15 +284,14 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
       T6_2 += t6_2 - t6_1
     }
 
-    System.out.println("[DBConnector] In T6, get value  T6_1 = " + T6_1/1000.0 + "s")
-    System.out.println("[DBConnector] In T6, build json T6_2 = " + T6_2/1000.0 + "s")
-    //System.out.println(resultJsonArray.value.length)
+    //println("[DBConnector] In T6, get value  T6_1 = " + T6_1/1000.0 + "s")
+    //println("[DBConnector] In T6, build json T6_2 = " + T6_2/1000.0 + "s")
 
-    resultJsonArray
+    (resultJsonArray, length)
   }
 
   override def preStart(): Unit = {
-    System.out.println("DBConnector starting ...")
+    println("DBConnector starting ...")
   }
 }
 
@@ -274,7 +299,7 @@ object DBConnector {
   def props(out :ActorRef) = Props(new DBConnector(out))
 
   def startDB(): Unit = {
-    System.out.println("Starting DB ...")
+    println("Starting DB ...")
   }
 
   def stopDB(): Unit = {

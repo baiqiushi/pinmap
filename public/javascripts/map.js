@@ -16,7 +16,9 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
             if (keyword && keyword !== $scope.keyword) {
                 $scope.keyword = keyword;
                 $scope.resultCount = 0;
-                var query = {offset: $scope.offset, limit: $scope.limit, keyword: $scope.keyword, byArray: true};
+                //var query = {keyword: $scope.keyword, offset: $scope.offset, limit: $scope.limit, byArray: true};
+                var query = {keyword: $scope.keyword, mode: "offset", sliceInterval: 40000,  byArray: true};
+                //var query = {keyword: $scope.keyword, byArray: true};
                 $scope.timestamps.t0 = Date.now();
                 $scope.ws.send(JSON.stringify(query));
             }
@@ -82,6 +84,7 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
 
             $scope.waitForWS();
             moduleManager.subscribeEvent(moduleManager.EVENT.CHANGE_SEARCH_KEYWORD, function(e) {
+                $scope.cleanPinMap();
                 $scope.sendQuery(e.keyword);
             });
         };
@@ -92,8 +95,6 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                 $scope.resultCount += $scope.pinmapMapResult.length;
                 moduleManager.publishEvent(moduleManager.EVENT.CHANGE_RESULT_COUNT, {resultCount: $scope.resultCount});
                 $scope.timestamps.t9 = $scope.drawPinMap($scope.pinmapMapResult);
-
-                //$scope.sendCmd("stopDB");
             }
         };
 
@@ -130,7 +131,7 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                     $scope.timestamps.t7 - $scope.timestamps.t0 // T1 + T2 + ... + T7
                 ];
 
-                console.log(JSON.stringify($scope.timestamps));
+                //console.log(JSON.stringify($scope.timestamps));
                 console.log(JSON.stringify($scope.times));
             });
         };
@@ -153,8 +154,7 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
         // by using the tweet id as the seed, the same tweet will always be randomized to the same coordinate.
         $scope.rangeRandom = function rangeRandom(seed, minV, maxV){
             randomizationSeed = seed;
-            var ret = randomNorm((minV + maxV) / 2, (maxV - minV) / 16);
-            return ret;
+            return randomNorm((minV + maxV) / 2, (maxV - minV) / 16);
         };
 
         // function for drawing pinmap
@@ -179,10 +179,10 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                     for (var i = 0; i < result.length; i++) {
                         $scope.points.push([coordinates[i][1], coordinates[i][0], ids[i]]);
                     }
-                    //$scope.pointsLayer.appendData($scope.points);
+
                     console.log("drawing points size = " + $scope.points.length);
                     //console.log($scope.points);
-                    return $scope.pointsLayer.setData($scope.points);
+                    return $scope.pointsLayer.appendData($scope.points);
                 }
                 // (2) returned by json - each record in one json object
                 else {
@@ -198,14 +198,22 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
                             $scope.points.push([result[i].y, result[i].x, result[i].id]);
                         }
                     }
-                    //$scope.pointsLayer.appendData($scope.points);
+
                     console.log("drawing points size = " + $scope.points.length);
                     //console.log($scope.points);
-                    return $scope.pointsLayer.setData($scope.points);
+                    return $scope.pointsLayer.appendData($scope.points);
                 }
             }
 
             return 0;
+        };
+
+        $scope.cleanPinMap = function() {
+            $scope.points = [];
+            if($scope.pointsLayer != null) {
+                $scope.map.removeLayer($scope.pointsLayer);
+                $scope.pointsLayer = null;
+            }
         };
     })
     .directive("map", function () {

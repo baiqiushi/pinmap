@@ -55,7 +55,9 @@ var WebGLPointLayer = L.CanvasLayer.extend({
      */
     appendData: function(deltaData) {
         if ( this._checkData(deltaData) )
-            this._appendBuffers(deltaData);
+            return this._appendBuffers(deltaData);
+        else
+            return 0;
     },
 
 
