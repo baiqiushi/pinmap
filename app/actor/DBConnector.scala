@@ -22,6 +22,9 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
   val xColName: String = "x"
   val yColName: String = "y"
   val idColName: String = "id"
+  val datasetStart: DateTime = dateTimeFormat.parseDateTime("2017-01-24 00:00:00")
+  val datasetEnd: DateTime = dateTimeFormat.parseDateTime("2017-09-09 00:00:00")
+  val defaultSliceInterval: Int = 30
 
   override def receive: Receive = {
     case request : JsValue =>
@@ -54,8 +57,9 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           val limit: Option[Int] = (request \ "limit").asOpt[Int]
           val mode: Option[String] = (request \ "mode").asOpt[String] // offset, interval
           val sliceInterval: Option[Int] = (request \ "sliceInterval").asOpt[Int] // offset, # of days
+          val excludes: Option[Boolean] = (request \ "excludes").asOpt[Boolean] // true, false
 
-          val sqlTemplate: String = genSQLTemplate(keyword, start, end, offset, limit, mode)
+          val sqlTemplate: String = genSQLTemplate(keyword, start, end, offset, limit, mode, excludes)
 
           val t2: Long = System.currentTimeMillis // t2 - request parsed
 
@@ -131,7 +135,8 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
   }
 
   private def genSQLTemplate(keyword: String, start: Option[DateTime], end: Option[DateTime],
-                             offset: Option[Int], limit: Option[Int], mode: Option[String]) : String = {
+                             offset: Option[Int], limit: Option[Int], mode: Option[String],
+                             excludes: Option[Boolean]) : String = {
     var sqlTemplate: String =
       s"""
          |select x, y, id
@@ -139,22 +144,34 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
          | where to_tsvector('english',text)@@to_tsquery('english',?)
      """.stripMargin
 
-    if (!start.isEmpty)
-      sqlTemplate += " and create_at >= ?"
-    if (!end.isEmpty)
-      sqlTemplate +=" and create_at < ?"
+    excludes match {
+      case Some(exclude) =>
+        if (exclude) {
+          sqlTemplate += " and (width_bucket(x, -173.847656, -65.390625, 1920), " +
+            "width_bucket(y, 17.644022, 70.377854, 1080)) " +
+            "not in (select distinct bx, by from tweets_" + keyword + ")"
+        }
+    }
 
     mode match {
       case Some(sliceMode) =>
-        //TODO - if slicing mode, concatenate the sql template string
          sliceMode match {
            case "offset" =>
+             if (!start.isEmpty)
+               sqlTemplate += " and create_at >= ?"
+             if (!end.isEmpty)
+               sqlTemplate +=" and create_at < ?"
              sqlTemplate += " offset ?"
              sqlTemplate += " limit ?"
            case "interval" =>
-             ???
+               sqlTemplate += " and create_at >= ?"
+               sqlTemplate +=" and create_at < ?"
          }
       case None =>
+        if (!start.isEmpty)
+          sqlTemplate += " and create_at >= ?"
+        if (!end.isEmpty)
+          sqlTemplate +=" and create_at < ?"
         if (!offset.isEmpty)
           sqlTemplate += " offset ?"
         if (!limit.isEmpty)
@@ -173,29 +190,87 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
     var pIndex = 1
     preparedStatement.setString(pIndex, keyword)
     pIndex += 1
-    if (!start.isEmpty) {
-      preparedStatement.setString(pIndex, dateTimeFormat.print(start.get))
-      pIndex += 1
-    }
-    if (!end.isEmpty) {
-      preparedStatement.setString(pIndex, dateTimeFormat.print(end.get))
-      pIndex += 1
-    }
 
     mode match {
       case Some(sliceMode) =>
-        //TODO - if slicing mode, determine the nextInterval or nextOffset
         sliceMode match {
           case "offset" =>
+            if (!start.isEmpty) {
+              preparedStatement.setString(pIndex, dateTimeFormat.print(start.get))
+              pIndex += 1
+            }
+            if (!end.isEmpty) {
+              preparedStatement.setString(pIndex, dateTimeFormat.print(end.get))
+              pIndex += 1
+            }
             preparedStatement.setInt(pIndex, thisOffset.get)
             pIndex += 1
             preparedStatement.setInt(pIndex, sliceInterval.get)
             pIndex += 1
             (false, thisInterval, Option(thisOffset.get + sliceInterval.get))
           case "interval" =>
-            ???
+            var isDone: Boolean = false
+            var interval: Int = sliceInterval.getOrElse(defaultSliceInterval)
+            var thisEnd: DateTime = null
+            var thisStart: DateTime = null
+            // This first time rewrite a mini query
+            if (thisInterval.isEmpty) {
+              // Calculate this end
+              if (!end.isEmpty) {
+                if (end.get.isBefore(datasetEnd)) {
+                  thisEnd = end.get
+                }
+                else {
+                  thisEnd = datasetEnd
+                }
+              }
+              else {
+                thisEnd = datasetEnd
+              }
+              // Calculate this start
+              thisStart = thisEnd.minusDays(interval)
+              if (thisStart.isBefore(start.getOrElse(datasetStart))) {
+                thisStart = start.getOrElse(datasetStart)
+                isDone = true
+              }
+              if (thisStart.isBefore(datasetStart)) {
+                thisStart = datasetStart
+                isDone = true
+              }
+            }
+            // Not first time rewrite a mini query, this interval was calculated
+            else {
+              thisStart = thisInterval.get.getStart
+              thisEnd = thisInterval.get.getEnd
+            }
+
+            pIndex += 1
+            preparedStatement.setString(pIndex, dateTimeFormat.print(thisStart))
+            pIndex += 1
+            preparedStatement.setString(pIndex, dateTimeFormat.print(thisEnd))
+
+            // Calculate interval for next mini query
+            val nextEnd: DateTime = thisStart
+            var nextStart: DateTime = nextEnd.minusDays(interval)
+            if (nextStart.isBefore(start.getOrElse(datasetStart))) {
+              nextStart = start.getOrElse(datasetStart)
+            }
+            if (nextStart.isBefore(datasetStart)) {
+              nextStart = datasetStart
+            }
+            val nextInterval: Interval = new Interval(nextStart, nextEnd)
+
+            (isDone, Option(nextInterval), thisOffset)
         }
       case None => // no slice
+        if (!start.isEmpty) {
+          preparedStatement.setString(pIndex, dateTimeFormat.print(start.get))
+          pIndex += 1
+        }
+        if (!end.isEmpty) {
+          preparedStatement.setString(pIndex, dateTimeFormat.print(end.get))
+          pIndex += 1
+        }
         if (!offset.isEmpty) {
           preparedStatement.setInt(pIndex, offset.get)
           pIndex += 1
