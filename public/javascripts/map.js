@@ -4,24 +4,34 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
         $scope.times = [];
         $scope.timestamps = {};
 
-        $scope.offset = 0;
-        $scope.limit = 200000; // 10M
         $scope.keyword = "";
         $scope.resultCount = 0;
 
         $scope.ws = new WebSocket("ws://" + location.host + "/ws");
         $scope.pinmapMapResul = [];
 
-        $scope.sendQuery = function(keyword) {
-            if (keyword && keyword !== $scope.keyword) {
-                $scope.keyword = keyword;
-                $scope.resultCount = 0;
-                //var query = {keyword: $scope.keyword, offset: $scope.offset, limit: $scope.limit, byArray: true};
-                var query = {keyword: $scope.keyword, mode: "offset", sliceInterval: 40000,  byArray: true};
-                //var query = {keyword: $scope.keyword, byArray: true};
-                $scope.timestamps.t0 = Date.now();
-                $scope.ws.send(JSON.stringify(query));
+        $scope.sendQuery = function(e) {
+            console.log("e = " + e);
+
+            $scope.keyword = e.keyword;
+            $scope.resultCount = 0;
+            //var query = {keyword: $scope.keyword, offset: $scope.offset, limit: $scope.limit, byArray: true};
+            var query = {keyword: $scope.keyword, byArray: true};
+            if (e.slicingMode === "By-Interval") {
+                query["mode"] = "interval"
             }
+            else if (e.slicingMode === "By-Offset") {
+                query["mode"] = "offset"
+            }
+            if (e.excludes) {
+                query["excludes"] = true
+            }
+            $scope.timestamps.t0 = Date.now();
+            console.log("sending query:");
+            console.log(query);
+
+            $scope.ws.send(JSON.stringify(query));
+
         };
 
         $scope.sendCmd = function(command) {
@@ -85,7 +95,7 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
             $scope.waitForWS();
             moduleManager.subscribeEvent(moduleManager.EVENT.CHANGE_SEARCH_KEYWORD, function(e) {
                 $scope.cleanPinMap();
-                $scope.sendQuery(e.keyword);
+                $scope.sendQuery(e);
             });
         };
 

@@ -1,6 +1,7 @@
 package actor
 
-import java.sql.{Connection, DriverManager, PreparedStatement, ResultSet}
+import java.sql.{Connection, DriverManager, PreparedStatement, ResultSet, Statement, Timestamp}
+import java.util.TimeZone
 
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import org.joda.time.{DateTime, Interval}
@@ -22,9 +23,11 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
   val xColName: String = "x"
   val yColName: String = "y"
   val idColName: String = "id"
-  val datasetStart: DateTime = dateTimeFormat.parseDateTime("2017-01-24 00:00:00")
-  val datasetEnd: DateTime = dateTimeFormat.parseDateTime("2017-09-09 00:00:00")
+  val datasetStart: DateTime = dateTimeFormat.parseDateTime("2017-01-24 00:00:00.000")
+  val datasetEnd: DateTime = dateTimeFormat.parseDateTime("2017-09-10 00:00:00.000")
+  TimeZone.setDefault(TimeZone.getTimeZone("GMT"))
   val defaultSliceInterval: Int = 30
+  val defaultSliceOffset: Int = 5000
 
   override def receive: Receive = {
     case request : JsValue =>
@@ -60,13 +63,31 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           val excludes: Option[Boolean] = (request \ "excludes").asOpt[Boolean] // true, false
 
           val sqlTemplate: String = genSQLTemplate(keyword, start, end, offset, limit, mode, excludes)
+          println("sqlTemplate = " + sqlTemplate)
+          val insertTemplate: String = genInsertSQLTemplate(keyword, start, end, offset, limit, mode, excludes)
+          println("insertTemplate = " + insertTemplate)
 
           val t2: Long = System.currentTimeMillis // t2 - request parsed
 
           // 2 Establish connection to DB with prepared statement
           Class.forName(driver)
           val connection: Connection = DriverManager.getConnection(url, username, password)
-          val preparedStatement: PreparedStatement = connection.prepareStatement(sqlTemplate)
+
+          // 2.1 If excludes ON, create temporary table
+          if (excludes.getOrElse(false)) {
+            val updateStatement: Statement = connection.createStatement
+            val createTempTableSQL: String = "create temp table tweets_" + keyword +
+              " as select width_bucket(x, -173.847656, -65.390625, 1920) as bx, " +
+              " width_bucket(y, 17.644022, 70.377854, 1080) as by " +
+              " from tweets where 1=2;"
+            val success: Int = updateStatement.executeUpdate(createTempTableSQL)
+            println("[DBConnector] create temporary table: " + success)
+            updateStatement.close
+          }
+
+          val queryStatement: PreparedStatement = connection.prepareStatement(sqlTemplate)
+
+          val insertStatement: PreparedStatement = connection.prepareStatement(insertTemplate)
 
           val t3: Long = System.currentTimeMillis // t3 - db connected
 
@@ -77,22 +98,32 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           var thisOffset: Option[Int] = Option(0)
           do {
             // Rewrite query
-            val (isDone, nextInterval, nextOffset) = rewriteQuery(preparedStatement, keyword, start, end,
+            val (isDone, nextInterval, nextOffset) = rewriteQuery(queryStatement, keyword, start, end,
               offset, limit, mode, sliceInterval, thisInterval, thisOffset)
+
+            println("[DBConnector] query statement = " + queryStatement)
+
+            // 3.1 If excludes ON, rewrite insert temporary table query
+            if (excludes.getOrElse(false)) {
+              rewriteQuery(insertStatement, keyword, start, end,
+                offset, limit, mode, sliceInterval, thisInterval, thisOffset)
+              println("[DBConnector] insert statement = " + insertStatement)
+            }
+
             done = isDone
             thisInterval = nextInterval
             thisOffset = nextOffset
 
             val t4: Long = System.currentTimeMillis // t4 - send db query
 
-            resultSet = preparedStatement.executeQuery()
+            resultSet = queryStatement.executeQuery()
 
             val t5: Long = System.currentTimeMillis // t5 - db result
 
             println("[DBConnector] DB done. T4 + T5 =  " + (t5 - t4) / 1000.0 + "s")
 
             //println("DBConnector ==> SQL")
-            //println(preparedStatement)
+            //println(queryStatement)
             //println()
 
             // Two ways to return result
@@ -107,6 +138,17 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
                 genDataByJson(resultSet)
             }
 
+
+            // 3.2 If excludes ON, insert the cell ids to the temporary table
+            if (excludes.getOrElse(false)) {
+              val t_insert_0: Long = System.currentTimeMillis
+              val success: Int = insertStatement.executeUpdate()
+              val t_insert_1: Long = System.currentTimeMillis
+              println("[DBConnector] insert into temporary table: " + success +
+                ", time: " + (t_insert_1 - t_insert_0) + " ms")
+            }
+
+
             val t6 = System.currentTimeMillis()
             println("[DBConnector] JSON done. T6 = " + (t6 - t5) / 1000.0 + "s")
 
@@ -120,7 +162,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
             )
             out ! Json.toJson(responseJson)
 
-            println("result length = " + length)
+            println("[DBConnector] result length = " + length)
 
             if (!mode.isEmpty) {
               if(mode.get.toString == "offset" && length < sliceInterval.get.intValue) {
@@ -131,6 +173,8 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           } while (!done)
 
           println("[DBConnector] ==> Query Done!")
+          queryStatement.close
+          connection.close
       }
   }
 
@@ -144,13 +188,11 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
          | where to_tsvector('english',text)@@to_tsquery('english',?)
      """.stripMargin
 
-    excludes match {
-      case Some(exclude) =>
-        if (exclude) {
-          sqlTemplate += " and (width_bucket(x, -173.847656, -65.390625, 1920), " +
-            "width_bucket(y, 17.644022, 70.377854, 1080)) " +
-            "not in (select distinct bx, by from tweets_" + keyword + ")"
-        }
+
+    if (excludes.getOrElse(false)) {
+      sqlTemplate += " and (width_bucket(x, -173.847656, -65.390625, 1920), " +
+        "width_bucket(y, 17.644022, 70.377854, 1080)) " +
+        "not in (select distinct bx, by from tweets_" + keyword + ")"
     }
 
     mode match {
@@ -181,6 +223,55 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
     sqlTemplate
   }
 
+  //TODO - Combine this function with genSQLTemplate by extracting common part
+  private def genInsertSQLTemplate(keyword: String, start: Option[DateTime], end: Option[DateTime],
+                                   offset: Option[Int], limit: Option[Int], mode: Option[String],
+                                   excludes: Option[Boolean]) : String = {
+    var insertSQLTemplate: String =
+      s"""
+         |insert into tweets_$keyword
+         |select distinct
+         |       width_bucket(x, -173.847656, -65.390625, 1920) as bx,
+         |       width_bucket(y, 17.644022, 70.377854, 1080) as by
+         |  from tweets
+         | where to_tsvector('english',text)@@to_tsquery('english',?)
+     """.stripMargin
+
+
+    if (excludes.getOrElse(false)) {
+      insertSQLTemplate += s" and (width_bucket(x, -173.847656, -65.390625, 1920), " +
+        s"width_bucket(y, 17.644022, 70.377854, 1080)) " +
+        s"not in (select distinct bx, by from tweets_$keyword)"
+    }
+
+    mode match {
+      case Some(sliceMode) =>
+        sliceMode match {
+          case "offset" =>
+            if (!start.isEmpty)
+              insertSQLTemplate += " and create_at >= ?"
+            if (!end.isEmpty)
+              insertSQLTemplate +=" and create_at < ?"
+            insertSQLTemplate += " offset ?"
+            insertSQLTemplate += " limit ?"
+          case "interval" =>
+            insertSQLTemplate += " and create_at >= ?"
+            insertSQLTemplate +=" and create_at < ?"
+        }
+      case None =>
+        if (!start.isEmpty)
+          insertSQLTemplate += " and create_at >= ?"
+        if (!end.isEmpty)
+          insertSQLTemplate +=" and create_at < ?"
+        if (!offset.isEmpty)
+          insertSQLTemplate += " offset ?"
+        if (!limit.isEmpty)
+          insertSQLTemplate += " limit ?"
+    }
+
+    insertSQLTemplate
+  }
+
   private def rewriteQuery(preparedStatement: PreparedStatement, keyword: String,
                            start: Option[DateTime], end: Option[DateTime],
                            offset: Option[Int], limit: Option[Int],
@@ -196,18 +287,18 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
         sliceMode match {
           case "offset" =>
             if (!start.isEmpty) {
-              preparedStatement.setString(pIndex, dateTimeFormat.print(start.get))
+              preparedStatement.setTimestamp(pIndex, new Timestamp(start.get.getMillis))
               pIndex += 1
             }
             if (!end.isEmpty) {
-              preparedStatement.setString(pIndex, dateTimeFormat.print(end.get))
+              preparedStatement.setTimestamp(pIndex, new Timestamp(end.get.getMillis))
               pIndex += 1
             }
             preparedStatement.setInt(pIndex, thisOffset.get)
             pIndex += 1
-            preparedStatement.setInt(pIndex, sliceInterval.get)
+            preparedStatement.setInt(pIndex, sliceInterval.getOrElse(defaultSliceOffset))
             pIndex += 1
-            (false, thisInterval, Option(thisOffset.get + sliceInterval.get))
+            (false, thisInterval, Option(thisOffset.get + sliceInterval.getOrElse(defaultSliceOffset)))
           case "interval" =>
             var isDone: Boolean = false
             var interval: Int = sliceInterval.getOrElse(defaultSliceInterval)
@@ -229,11 +320,11 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
               }
               // Calculate this start
               thisStart = thisEnd.minusDays(interval)
-              if (thisStart.isBefore(start.getOrElse(datasetStart))) {
+              if (thisStart.isBefore(start.getOrElse(datasetStart)) || thisStart.isEqual(start.getOrElse(datasetStart))) {
                 thisStart = start.getOrElse(datasetStart)
                 isDone = true
               }
-              if (thisStart.isBefore(datasetStart)) {
+              if (thisStart.isBefore(datasetStart) || thisStart.isEqual(datasetStart)) {
                 thisStart = datasetStart
                 isDone = true
               }
@@ -244,31 +335,37 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
               thisEnd = thisInterval.get.getEnd
             }
 
+            preparedStatement.setTimestamp(pIndex, new Timestamp(thisStart.getMillis))
             pIndex += 1
-            preparedStatement.setString(pIndex, dateTimeFormat.print(thisStart))
+            preparedStatement.setTimestamp(pIndex, new Timestamp(thisEnd.getMillis))
             pIndex += 1
-            preparedStatement.setString(pIndex, dateTimeFormat.print(thisEnd))
 
             // Calculate interval for next mini query
             val nextEnd: DateTime = thisStart
             var nextStart: DateTime = nextEnd.minusDays(interval)
-            if (nextStart.isBefore(start.getOrElse(datasetStart))) {
+            if (nextStart.isBefore(start.getOrElse(datasetStart)) || thisStart.isEqual(start.getOrElse(datasetStart))) {
               nextStart = start.getOrElse(datasetStart)
             }
-            if (nextStart.isBefore(datasetStart)) {
+            if (nextStart.isBefore(datasetStart) || thisStart.isEqual(datasetStart)) {
               nextStart = datasetStart
             }
             val nextInterval: Interval = new Interval(nextStart, nextEnd)
+            if (nextEnd.isBefore(start.getOrElse(datasetStart)) || nextEnd.isEqual(start.getOrElse(datasetStart))) {
+              isDone = true
+            }
+            if (nextEnd.isBefore(datasetStart) || nextEnd.isEqual(datasetStart)) {
+              isDone = true
+            }
 
             (isDone, Option(nextInterval), thisOffset)
         }
       case None => // no slice
         if (!start.isEmpty) {
-          preparedStatement.setString(pIndex, dateTimeFormat.print(start.get))
+          preparedStatement.setTimestamp(pIndex, new Timestamp(start.get.getMillis))
           pIndex += 1
         }
         if (!end.isEmpty) {
-          preparedStatement.setString(pIndex, dateTimeFormat.print(end.get))
+          preparedStatement.setTimestamp(pIndex, new Timestamp(end.get.getMillis))
           pIndex += 1
         }
         if (!offset.isEmpty) {
