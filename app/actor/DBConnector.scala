@@ -138,6 +138,8 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
                 genDataByJson(resultSet)
             }
 
+            val t6 = System.currentTimeMillis()
+            println("[DBConnector] JSON done. T6 = " + (t6 - t5) / 1000.0 + "s")
 
             // 3.2 If excludes ON, insert the cell ids to the temporary table
             if (excludes.getOrElse(false)) {
@@ -147,10 +149,6 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
               println("[DBConnector] insert into temporary table: " + success +
                 ", time: " + (t_insert_1 - t_insert_0) + " ms")
             }
-
-
-            val t6 = System.currentTimeMillis()
-            println("[DBConnector] JSON done. T6 = " + (t6 - t5) / 1000.0 + "s")
 
             val responseJson: JsObject = Json.obj("data" -> data,
               "t1" -> JsNumber(t1),
