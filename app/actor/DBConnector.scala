@@ -2,7 +2,7 @@ package actor
 
 import java.sql.{Connection, DriverManager, PreparedStatement, ResultSet, Statement, Timestamp}
 import java.util.TimeZone
-
+import sys.process._
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import org.joda.time.{DateTime, Interval}
 import org.joda.time.format.DateTimeFormat
@@ -34,6 +34,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
       (request \ "cmd").asOpt[String] match {
         // Command
         case Some(command) =>
+          MyLogger.info("[DBConnector] cmd received: " + request)
           command match {
             case "startDB" =>
               DBConnector.startDB()
@@ -473,12 +474,16 @@ object DBConnector {
 
   def startDB(): Unit = {
     println("Starting DB ...")
+    val result = "echo 3979" #| "sudo -S -u postgres pg_ctl -D /Library/PostgreSQL/9.6/data stop" !
+
+    println("command result: " + result)
   }
 
   def stopDB(): Unit = {
-    System.out.println("Stopping DB ...")
-    //val result = "sudo -u postgres pg_ctl -D /Library/PostgreSQL/9.6/data stop" !
-    //println(result)
+    println("Stopping DB ...")
+    val result = "echo 3979" #| "sudo -S -u postgres pg_ctl -D /Library/PostgreSQL/9.6/data stop" !
+
+    println("command result: " + result)
   }
 }
 
