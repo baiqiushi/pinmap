@@ -44,6 +44,8 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
         // Query
         case _ =>
 
+          MyLogger.info("[DBConnector] query received: " + request)
+
           val t1: Long = System.currentTimeMillis // t1 - request received
 
           // 1 Parse query JSON
@@ -63,9 +65,9 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           val excludes: Option[Boolean] = (request \ "excludes").asOpt[Boolean] // true, false
 
           val sqlTemplate: String = genSQLTemplate(keyword, start, end, offset, limit, mode, excludes)
-          println("sqlTemplate = " + sqlTemplate)
+          MyLogger.debug("sqlTemplate = " + sqlTemplate)
           val insertTemplate: String = genInsertSQLTemplate(keyword, start, end, offset, limit, mode, excludes)
-          println("insertTemplate = " + insertTemplate)
+          MyLogger.debug("insertTemplate = " + insertTemplate)
 
           val t2: Long = System.currentTimeMillis // t2 - request parsed
 
@@ -81,7 +83,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
               " width_bucket(y, 17.644022, 70.377854, 1080) as by " +
               " from tweets where 1=2;"
             val success: Int = updateStatement.executeUpdate(createTempTableSQL)
-            println("[DBConnector] create temporary table: " + success)
+            MyLogger.debug("[DBConnector] create temporary table: " + success)
             updateStatement.close
           }
 
@@ -101,13 +103,13 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
             val (isDone, nextInterval, nextOffset) = rewriteQuery(queryStatement, keyword, start, end,
               offset, limit, mode, sliceInterval, thisInterval, thisOffset)
 
-            println("[DBConnector] query statement = " + queryStatement)
+            MyLogger.debug("[DBConnector] query statement = " + queryStatement)
 
             // 3.1 If excludes ON, rewrite insert temporary table query
             if (excludes.getOrElse(false)) {
               rewriteQuery(insertStatement, keyword, start, end,
                 offset, limit, mode, sliceInterval, thisInterval, thisOffset)
-              println("[DBConnector] insert statement = " + insertStatement)
+              MyLogger.debug("[DBConnector] insert statement = " + insertStatement)
             }
 
             done = isDone
@@ -120,11 +122,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
 
             val t5: Long = System.currentTimeMillis // t5 - db result
 
-            println("[DBConnector] DB done. T4 + T5 =  " + (t5 - t4) / 1000.0 + "s")
-
-            //println("DBConnector ==> SQL")
-            //println(queryStatement)
-            //println()
+            MyLogger.debug("[DBConnector] DB done. T4 + T5 =  " + (t5 - t4) / 1000.0 + "s")
 
             // Two ways to return result
             val (data, length) = (request \ "byArray").asOpt[Boolean] match {
@@ -139,28 +137,33 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
             }
 
             val t6 = System.currentTimeMillis()
-            println("[DBConnector] JSON done. T6 = " + (t6 - t5) / 1000.0 + "s")
+            MyLogger.debug("[DBConnector] JSON done. T6 = " + (t6 - t5) / 1000.0 + "s")
 
             // 3.2 If excludes ON, insert the cell ids to the temporary table
+            var T45i: Long = 0
             if (excludes.getOrElse(false)) {
               val t_insert_0: Long = System.currentTimeMillis
               val success: Int = insertStatement.executeUpdate()
               val t_insert_1: Long = System.currentTimeMillis
-              println("[DBConnector] insert into temporary table: " + success +
-                ", time: " + (t_insert_1 - t_insert_0) + " ms")
+              T45i = t_insert_1 - t_insert_0
+              MyLogger.debug("[DBConnector] insert into temporary table: " + success)
+              MyLogger.debug("[DBConnector] T45i = " + T45i / 1000.0 + "s")
             }
 
-            val responseJson: JsObject = Json.obj("data" -> data,
+            val responseJson: JsObject = Json.obj(
+              "data" -> data,
+              "length" -> length,
               "t1" -> JsNumber(t1),
               "T2" -> JsNumber(t2 - t1),
               "T3" -> JsNumber(t3 - t2),
               "T45" -> JsNumber(t5 - t4),
               "T6" -> JsNumber(t6 - t5),
-              "t6" -> JsNumber(t6)
+              "t6" -> JsNumber(t6),
+              "T45i" -> JsNumber(T45i)
             )
             out ! Json.toJson(responseJson)
 
-            println("[DBConnector] result length = " + length)
+            MyLogger.debug("[DBConnector] result length = " + length)
 
             if (!mode.isEmpty) {
               if(mode.get.toString == "offset" && length < sliceInterval.get.intValue) {
@@ -170,7 +173,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
 
           } while (!done)
 
-          println("[DBConnector] ==> Query Done!")
+          MyLogger.info("[DBConnector] ==> Query Done!")
           queryStatement.close
           connection.close
       }
@@ -476,5 +479,20 @@ object DBConnector {
     System.out.println("Stopping DB ...")
     //val result = "sudo -u postgres pg_ctl -D /Library/PostgreSQL/9.6/data stop" !
     //println(result)
+  }
+}
+
+object MyLogger {
+
+  private val DEBUG = true
+
+  def debug(msg: String): Unit = {
+    if (DEBUG) {
+      println(msg)
+    }
+  }
+
+  def info(msg: String): Unit = {
+    println(msg)
   }
 }
