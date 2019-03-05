@@ -114,6 +114,11 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
 
                 const response = JSONbig.parse(event.data);
 
+                if (response.done) {
+                    console.log("-------- Done! --------");
+                    return;
+                }
+
                 $scope.timestamps.t8 = Date.now();
 
                 //console.log("ws.onmessage <= " + JSON.stringify(response));

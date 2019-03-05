@@ -175,6 +175,9 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           } while (!done)
 
           MyLogger.info("[DBConnector] ==> Query Done!")
+
+          out ! Json.toJson(Json.obj("done" -> true))
+
           queryStatement.close
           connection.close
       }
