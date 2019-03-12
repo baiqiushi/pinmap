@@ -116,6 +116,15 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
 
                 if (response.done) {
                     console.log("-------- Done! --------");
+                    function toCSV(array) {
+                        var csv = "";
+                        array.forEach(function(row) {
+                            csv += row.join(",") + "\n";
+                        });
+                        return csv;
+                    }
+                    console.log(toCSV($scope.times));
+                    $scope.times = [];
                     return;
                 }
 
@@ -123,31 +132,36 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
 
                 //console.log("ws.onmessage <= " + JSON.stringify(response));
 
+                $scope.timestamps.length = response.length;
                 $scope.timestamps.t1 = response.t1;
                 $scope.timestamps.T2 = response.T2;
                 $scope.timestamps.T3 = response.T3;
                 $scope.timestamps.T45 = response.T45;
+                $scope.timestamps.T45i = response.T45i;
                 $scope.timestamps.T6 = response.T6;
                 $scope.timestamps.t6 = response.t6;
 
                 $scope.handleResult(response.data);
 
                 $scope.timestamps.keyword = $scope.keyword;
-                $scope.times = [
+                $scope.times.push([
                     $scope.keyword, // keyword
+                    $scope.timestamps.length,
                     $scope.timestamps.t1 - $scope.timestamps.t0, // T1
                     $scope.timestamps.T2, // T2
                     $scope.timestamps.T3, // T3
                     $scope.timestamps.T45, // T4+T5
+                    0,  // T4
+                    $scope.timestamps.T45i, //T-insert
                     $scope.timestamps.T6, // T6
                     $scope.timestamps.t7 - $scope.timestamps.t6, // T7
                     $scope.timestamps.t8 - $scope.timestamps.t7, // T8
                     $scope.timestamps.t9 - $scope.timestamps.t8, // T9
                     $scope.timestamps.t7 - $scope.timestamps.t0 // T1 + T2 + ... + T7
-                ];
+                ]);
 
                 //console.log(JSON.stringify($scope.timestamps));
-                console.log(JSON.stringify($scope.times));
+                //console.log(JSON.stringify($scope.times));
             });
         };
 
