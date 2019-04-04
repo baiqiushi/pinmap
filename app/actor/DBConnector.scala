@@ -644,8 +644,8 @@ object DBConnector {
   //val startPostgresCMD: String = "sudo -S -u postgres pg_ctl -D /Library/PostgreSQL/9.6/data start"
   //val stopPostgresCMD: String = "sudo -S -u postgres pg_ctl -D /Library/PostgreSQL/9.6/data stop"
   val osPassword: String = "root3979"
-  val startPostgresCMD: String = "sudo systemctl start postgresql-9.6"
-  val stopPostgresCMD: String = "sudo systemctl stop postgresql-9.6"
+  val startPostgresCMD: String = "sudo -S systemctl start postgresql-9.6"
+  val stopPostgresCMD: String = "sudo -S systemctl stop postgresql-9.6"
 
   def props(out :ActorRef) = Props(new DBConnector(out))
 
