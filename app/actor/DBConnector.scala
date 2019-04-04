@@ -17,7 +17,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
   val dateTimeFormat = DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss.SSS")
 
   val driver: String = "org.postgresql.Driver"
-  val hostname: String = "tomato.ics.uci.edu" // "localhost"
+  val hostname: String = "localhost"
   val url: String = s"jdbc:postgresql://$hostname:5432/pinmap"
   val username: String = "postgres"
   val password: String = "pinmap"
