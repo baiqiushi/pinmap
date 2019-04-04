@@ -17,17 +17,22 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
   val dateTimeFormat = DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss.SSS")
 
   val driver: String = "org.postgresql.Driver"
-  val url: String = "jdbc:postgresql://localhost:5432/pinmap"
+  val hostname: String = "tomato.ics.uci.edu" // "localhost"
+  val url: String = s"jdbc:postgresql://$hostname:5432/pinmap"
   val username: String = "postgres"
   val password: String = "pinmap"
   val xColName: String = "x"
   val yColName: String = "y"
   val idColName: String = "id"
+  val baseTableName: String = "aug_tweets"
   val datasetStart: DateTime = dateTimeFormat.parseDateTime("2017-01-24 00:00:00.000")
   val datasetEnd: DateTime = dateTimeFormat.parseDateTime("2017-09-10 00:00:00.000")
   TimeZone.setDefault(TimeZone.getTimeZone("GMT"))
   val defaultSliceInterval: Int = 30
   val defaultSliceOffset: Int = 5000
+  val defaultExcludingWay: String = "cid"
+  val excludingBySubquery: Boolean = true
+  val hint: Boolean = true
 
   override def receive: Receive = {
     case request : JsValue =>
@@ -50,7 +55,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           val t1: Long = System.currentTimeMillis // t1 - request received
 
           // 1 Parse query JSON
-          val keyword: String = (request \ "keyword").as[String]
+          val keyword: Option[String] = (request \ "keyword").asOpt[String]
           val start: Option[DateTime] = (request \ "start").asOpt[String] match {
             case Some(s) => Some(dateTimeFormat.parseDateTime(s))
             case None => None
@@ -79,12 +84,16 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           // 2.1 If excludes ON, create temporary table
           if (excludes.getOrElse(false)) {
             val updateStatement: Statement = connection.createStatement
-            val createTempTableSQL: String = "create temp table tweets_" + keyword +
-              " as select width_bucket(x, -173.847656, -65.390625, 1920) as bx, " +
-              " width_bucket(y, 17.644022, 70.377854, 1080) as by " +
-              " from tweets where 1=2;"
+            val createTempTableSQL: String = genCreateTempTableSQLTemplate(keyword)
+            MyLogger.debug("[DBConnector] create temporary table statement = " + createTempTableSQL)
             val success: Int = updateStatement.executeUpdate(createTempTableSQL)
-            MyLogger.debug("[DBConnector] create temporary table: " + success)
+            success match {
+              case 0 =>
+                MyLogger.debug("[DBConnector] create temporary table succeed.")
+              case _ =>
+                MyLogger.debug("[DBConnector] create temporary table fail.")
+            }
+
             updateStatement.close
           }
 
@@ -185,70 +194,222 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
       }
   }
 
-  private def genSQLTemplate(keyword: String, start: Option[DateTime], end: Option[DateTime],
-                             offset: Option[Int], limit: Option[Int], mode: Option[String],
-                             excludes: Option[Boolean]) : String = {
+  private def genTempTableName(keyword: Option[String]) : String = {
+    keyword match {
+      case Some(kw) =>
+        baseTableName + "_" + kw
+      case None =>
+        baseTableName + "_exclude"
+    }
+  }
+
+  private def genExcludesStatement(keyword: Option[String]) : String = {
+
+    val tempTableName = genTempTableName(keyword)
+
+    defaultExcludingWay match {
+      case "cid" =>
+        s" t2.cid not in (select distinct cid from $tempTableName) "
+      case "bucket" =>
+        s"""
+           | (width_bucket(t2.x, -173.847656, -65.390625, 1920),
+           | width_bucket(t2.y, 17.644022, 70.377854, 1080))
+           | not in (select distinct bx, by from $tempTableName)
+         """.stripMargin
+    }
+  }
+
+  private def genCreateTempTableSQLTemplate(keyword: Option[String]): String = {
+
+    val tempTableName = genTempTableName(keyword)
+
+    defaultExcludingWay match {
+      case "cid" =>
+        s"""
+           |create temp table $tempTableName
+           | as select cid from $baseTableName where 1=2
+         """.stripMargin
+      case "bucket" =>
+        s"""
+           |create temp table $tempTableName
+           | as select width_bucket(x, -173.847656, -65.390625, 1920) as bx,
+           |           width_bucket(y, 17.644022, 70.377854, 1080) as by
+           |  from $baseTableName where 1=2
+         """.stripMargin
+    }
+  }
+
+  private def genExcludingSubquery(keyword: Option[String], start: Option[DateTime], end: Option[DateTime],
+                                     offset: Option[Int], limit: Option[Int], mode: Option[String],
+                                     excludes: Option[Boolean]) : String = {
     var sqlTemplate: String =
       s"""
-         |select x, y, id
-         |  from tweets
-         | where to_tsvector('english',text)@@to_tsquery('english',?)
+         |select id
+         |  from $baseTableName t2
+         | where 1=1
      """.stripMargin
 
-
-    if (excludes.getOrElse(false)) {
-      sqlTemplate += " and (width_bucket(x, -173.847656, -65.390625, 1920), " +
-        "width_bucket(y, 17.644022, 70.377854, 1080)) " +
-        "not in (select distinct bx, by from tweets_" + keyword + ")"
+    keyword match {
+      case Some(kw) =>
+        sqlTemplate += " and " + " to_tsvector('english', t2.text)@@to_tsquery('english', ?) "
+      case None =>
     }
+
+    sqlTemplate += " and " + genExcludesStatement(keyword)
 
     mode match {
       case Some(sliceMode) =>
-         sliceMode match {
-           case "offset" =>
-             if (!start.isEmpty)
-               sqlTemplate += " and create_at >= ?"
-             if (!end.isEmpty)
-               sqlTemplate +=" and create_at < ?"
-             sqlTemplate += " offset ?"
-             sqlTemplate += " limit ?"
-           case "interval" =>
-               sqlTemplate += " and create_at >= ?"
-               sqlTemplate +=" and create_at < ?"
-         }
+        sliceMode match {
+          case "offset" =>
+            if (start.isDefined)
+              sqlTemplate += " and t2.create_at >= ?"
+            if (end.isDefined)
+              sqlTemplate +=" and t2.create_at < ?"
+            sqlTemplate += " offset ?"
+            sqlTemplate += " limit ?"
+          case "interval" =>
+            sqlTemplate += " and t2.create_at >= ?"
+            sqlTemplate +=" and t2.create_at < ?"
+        }
       case None =>
-        if (!start.isEmpty)
-          sqlTemplate += " and create_at >= ?"
-        if (!end.isEmpty)
-          sqlTemplate +=" and create_at < ?"
-        if (!offset.isEmpty)
+        if (start.isDefined)
+          sqlTemplate += " and t2.create_at >= ?"
+        if (end.isDefined)
+          sqlTemplate +=" and t2.create_at < ?"
+        if (offset.isDefined)
           sqlTemplate += " offset ?"
-        if (!limit.isEmpty)
+        if (limit.isDefined)
           sqlTemplate += " limit ?"
     }
 
     sqlTemplate
   }
 
-  //TODO - Combine this function with genSQLTemplate by extracting common part
-  private def genInsertSQLTemplate(keyword: String, start: Option[DateTime], end: Option[DateTime],
-                                   offset: Option[Int], limit: Option[Int], mode: Option[String],
-                                   excludes: Option[Boolean]) : String = {
-    var insertSQLTemplate: String =
+  private def genSQLTemplate(keyword: Option[String], start: Option[DateTime], end: Option[DateTime],
+                             offset: Option[Int], limit: Option[Int], mode: Option[String],
+                             excludes: Option[Boolean]) : String = {
+    var sqlTemplate: String =
       s"""
-         |insert into tweets_$keyword
-         |select distinct
-         |       width_bucket(x, -173.847656, -65.390625, 1920) as bx,
-         |       width_bucket(y, 17.644022, 70.377854, 1080) as by
-         |  from tweets
-         | where to_tsvector('english',text)@@to_tsquery('english',?)
+         |select x, y, id
+         |  from $baseTableName t1
+         | where 1=1
      """.stripMargin
 
+    if (hint) {
+      sqlTemplate = "/*+ BitmapScan(t1) */ " + sqlTemplate
+    }
 
     if (excludes.getOrElse(false)) {
-      insertSQLTemplate += s" and (width_bucket(x, -173.847656, -65.390625, 1920), " +
-        s"width_bucket(y, 17.644022, 70.377854, 1080)) " +
-        s"not in (select distinct bx, by from tweets_$keyword)"
+      excludingBySubquery match {
+        case true =>
+          sqlTemplate += " and t1.id in (" +
+            genExcludingSubquery(keyword, start, end, offset, limit, mode, excludes) + ")"
+        case false =>
+          keyword match {
+            case Some(kw) =>
+              sqlTemplate += " and " + " to_tsvector('english', t1.text)@@to_tsquery('english', ?) "
+            case None =>
+          }
+
+          sqlTemplate += " and " + genExcludesStatement(keyword)
+
+          mode match {
+            case Some(sliceMode) =>
+              sliceMode match {
+                case "offset" =>
+                  if (start.isDefined)
+                    sqlTemplate += " and t1.create_at >= ?"
+                  if (end.isDefined)
+                    sqlTemplate += " and t1.create_at < ?"
+                  sqlTemplate += " offset ?"
+                  sqlTemplate += " limit ?"
+                case "interval" =>
+                  sqlTemplate += " and t1.create_at >= ?"
+                  sqlTemplate += " and t1.create_at < ?"
+              }
+            case None =>
+              if (start.isDefined)
+                sqlTemplate += " and t1.create_at >= ?"
+              if (end.isDefined)
+                sqlTemplate += " and t1.create_at < ?"
+              if (offset.isDefined)
+                sqlTemplate += " offset ?"
+              if (limit.isDefined)
+                sqlTemplate += " limit ?"
+          }
+      }
+    }
+    else {
+      keyword match {
+        case Some(kw) =>
+          sqlTemplate += " and " + " to_tsvector('english', t1.text)@@to_tsquery('english', ?) "
+        case None =>
+      }
+
+      mode match {
+        case Some(sliceMode) =>
+          sliceMode match {
+            case "offset" =>
+              if (start.isDefined)
+                sqlTemplate += " and t1.create_at >= ?"
+              if (end.isDefined)
+                sqlTemplate += " and t1.create_at < ?"
+              sqlTemplate += " offset ?"
+              sqlTemplate += " limit ?"
+            case "interval" =>
+              sqlTemplate += " and t1.create_at >= ?"
+              sqlTemplate += " and t1.create_at < ?"
+          }
+        case None =>
+          if (start.isDefined)
+            sqlTemplate += " and t1.create_at >= ?"
+          if (end.isDefined)
+            sqlTemplate += " and t1.create_at < ?"
+          if (offset.isDefined)
+            sqlTemplate += " offset ?"
+          if (limit.isDefined)
+            sqlTemplate += " limit ?"
+      }
+    }
+    sqlTemplate
+  }
+
+  //TODO - Combine this function with genSQLTemplate by extracting common part
+  private def genInsertSQLTemplate(keyword: Option[String], start: Option[DateTime], end: Option[DateTime],
+                                   offset: Option[Int], limit: Option[Int], mode: Option[String],
+                                   excludes: Option[Boolean]) : String = {
+
+    val tempTableName = genTempTableName(keyword)
+
+    var insertSQLTemplate: String =
+      defaultExcludingWay match {
+        case "cid" =>
+          s"""
+             |insert into $tempTableName
+             |select distinct
+             |       cid
+             |  from $baseTableName t2
+             | where 1=1
+           """.stripMargin
+        case "bucket" =>
+          s"""
+             |insert into $tempTableName
+             |select distinct
+             |       width_bucket(x, -173.847656, -65.390625, 1920) as bx,
+             |       width_bucket(y, 17.644022, 70.377854, 1080) as by
+             |  from $baseTableName t2
+             | where 1=1
+           """.stripMargin
+      }
+
+    keyword match {
+      case Some(kw) =>
+        insertSQLTemplate += " and " + " to_tsvector('english', t2.text)@@to_tsquery('english', ?) "
+      case None =>
+    }
+
+    if (excludes.getOrElse(false)) {
+      insertSQLTemplate += " and " + genExcludesStatement(keyword)
     }
 
     mode match {
@@ -256,20 +417,20 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
         sliceMode match {
           case "offset" =>
             if (!start.isEmpty)
-              insertSQLTemplate += " and create_at >= ?"
+              insertSQLTemplate += " and t2.create_at >= ?"
             if (!end.isEmpty)
-              insertSQLTemplate +=" and create_at < ?"
+              insertSQLTemplate +=" and t2.create_at < ?"
             insertSQLTemplate += " offset ?"
             insertSQLTemplate += " limit ?"
           case "interval" =>
-            insertSQLTemplate += " and create_at >= ?"
-            insertSQLTemplate +=" and create_at < ?"
+            insertSQLTemplate += " and t2.create_at >= ?"
+            insertSQLTemplate +=" and t2.create_at < ?"
         }
       case None =>
         if (!start.isEmpty)
-          insertSQLTemplate += " and create_at >= ?"
+          insertSQLTemplate += " and t2.create_at >= ?"
         if (!end.isEmpty)
-          insertSQLTemplate +=" and create_at < ?"
+          insertSQLTemplate +=" and t2.create_at < ?"
         if (!offset.isEmpty)
           insertSQLTemplate += " offset ?"
         if (!limit.isEmpty)
@@ -279,15 +440,19 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
     insertSQLTemplate
   }
 
-  private def rewriteQuery(preparedStatement: PreparedStatement, keyword: String,
+  private def rewriteQuery(preparedStatement: PreparedStatement, keyword: Option[String],
                            start: Option[DateTime], end: Option[DateTime],
                            offset: Option[Int], limit: Option[Int],
                            mode: Option[String], sliceInterval: Option[Int],
                            thisInterval: Option[Interval], thisOffset: Option[Int]):
   (Boolean, Option[Interval], Option[Int]) = {
     var pIndex = 1
-    preparedStatement.setString(pIndex, keyword)
-    pIndex += 1
+    keyword match{
+      case Some(kw) =>
+        preparedStatement.setString(pIndex, kw)
+        pIndex += 1
+      case None =>
+    }
 
     mode match {
       case Some(sliceMode) =>
@@ -475,18 +640,25 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
 }
 
 object DBConnector {
+  //val osPassword: String = "3979"
+  //val startPostgresCMD: String = "sudo -S -u postgres pg_ctl -D /Library/PostgreSQL/9.6/data start"
+  //val stopPostgresCMD: String = "sudo -S -u postgres pg_ctl -D /Library/PostgreSQL/9.6/data stop"
+  val osPassword: String = "root3979"
+  val startPostgresCMD: String = "sudo systemctl start postgresql-9.6"
+  val stopPostgresCMD: String = "sudo systemctl stop postgresql-9.6"
+
   def props(out :ActorRef) = Props(new DBConnector(out))
 
   def startDB(): Unit = {
     println("Starting DB ...")
-    val result = "echo 3979" #| "sudo -S -u postgres pg_ctl -D /Library/PostgreSQL/9.6/data stop" !
+    val result = s"echo $osPassword" #| startPostgresCMD !
 
     println("command result: " + result)
   }
 
   def stopDB(): Unit = {
     println("Stopping DB ...")
-    val result = "echo 3979" #| "sudo -S -u postgres pg_ctl -D /Library/PostgreSQL/9.6/data stop" !
+    val result = s"echo $osPassword" #| stopPostgresCMD !
 
     println("command result: " + result)
   }
