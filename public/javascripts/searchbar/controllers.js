@@ -14,6 +14,11 @@ angular.module("pinmap.searchbar", ["pinmap.common"])
                         {keyword: keywords[0], slicingMode: $scope.slicingMode, excludes: $scope.excludes});
                 }
             }
+            // No keyword query
+            else {
+                moduleManager.publishEvent(moduleManager.EVENT.CHANGE_SEARCH_KEYWORD,
+                  {slicingMode: $scope.slicingMode, excludes: $scope.excludes});
+            }
         };
 
         moduleManager.subscribeEvent(moduleManager.EVENT.WS_READY, function(e) {
@@ -32,7 +37,7 @@ angular.module("pinmap.searchbar", ["pinmap.common"])
                 '<select ng-model="slicingMode" ng-options="x for x in slicingModes" ng-init="slicingMode = slicingModes[1]"></select>',
                 '<label>Excludes On: <input type="checkbox" ng-model="excludes"></label>',
                 '<label class="sr-only">Keywords</label>',
-                '<input type="text" style="width: 97%" class="form-control " id="keyword-textbox" placeholder="Search keywords, e.g. hurricane" ng-model="keyword" required/>',
+                '<input type="text" style="width: 97%" class="form-control " id="keyword-textbox" placeholder="Search keywords, e.g. hurricane" ng-model="keyword"/>',
                 '<span class="input-group-btn">',
                 '<button type="submit" class="btn btn-primary" id="submit-button" ng-disabled="disableSearchButton">Submit</button>',
                 '</span>',

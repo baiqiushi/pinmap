@@ -13,14 +13,16 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
     $scope.sendQuery = function(e) {
       console.log("e = " + e);
 
-      $scope.keyword = e.keyword;
       $scope.resultCount = 0;
-      //var query = {keyword: $scope.keyword, offset: $scope.offset, limit: $scope.limit, byArray: true};
-      var query = {keyword: $scope.keyword, byArray: true};
+      //var query = {offset: $scope.offset, limit: $scope.limit, byArray: true};
+      var query = {byArray: true};
+      if (e.keyword) {
+        $scope.keyword = e.keyword;
+        query["keyword"] = $scope.keyword;
+      }
       if (e.slicingMode === "By-Interval") {
         query["mode"] = "interval"
-      }
-      else if (e.slicingMode === "By-Offset") {
+      } else if (e.slicingMode === "By-Offset") {
         query["mode"] = "offset"
       }
       if (e.excludes) {
@@ -31,7 +33,6 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
       console.log(query);
 
       $scope.ws.send(JSON.stringify(query));
-
     };
 
     $scope.sendCmd = function(command) {
