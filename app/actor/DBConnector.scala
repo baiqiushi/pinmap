@@ -296,7 +296,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
          | where 1=1
      """.stripMargin
 
-    if (hint) {
+    if (hint && excludes.getOrElse(false)) {
       sqlTemplate = "/*+ BitmapScan(t1) */ " + sqlTemplate
     }
 
