@@ -29,6 +29,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
   val datasetEnd: DateTime = dateTimeFormat.parseDateTime("2017-09-10 00:00:00.000")
   TimeZone.setDefault(TimeZone.getTimeZone("GMT"))
   val defaultSliceInterval: Int = 30
+  val defaultSliceFirstInterval: Int = 3
   val defaultSliceOffset: Int = 5000
   val defaultExcludingWay: String = "cid"
   val excludingBySubquery: Boolean = true
@@ -478,6 +479,8 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
             var thisStart: DateTime = null
             // This first time rewrite a mini query
             if (thisInterval.isEmpty) {
+              //the first query uses a different interval
+              interval = defaultSliceFirstInterval
               // Calculate this end
               if (!end.isEmpty) {
                 if (end.get.isBefore(datasetEnd)) {
