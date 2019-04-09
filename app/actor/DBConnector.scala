@@ -24,16 +24,16 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
   val xColName: String = "x"
   val yColName: String = "y"
   val idColName: String = "id"
-  val baseTableName: String = "aug_tweets"
+  val baseTableName: String = "tweets"
   val datasetStart: DateTime = dateTimeFormat.parseDateTime("2017-01-24 00:00:00.000")
   val datasetEnd: DateTime = dateTimeFormat.parseDateTime("2017-09-10 00:00:00.000")
   TimeZone.setDefault(TimeZone.getTimeZone("GMT"))
-  val defaultSliceInterval: Int = 30
-  val defaultSliceFirstInterval: Int = 3
+  var defaultSliceInterval: Int = 30
+  var sliceFirstInterval: Int = 3
   val defaultSliceOffset: Int = 5000
-  val defaultExcludingWay: String = "cid"
-  val excludingBySubquery: Boolean = true
-  val hint: Boolean = true
+  var excludesWay: String = "bucket"
+  var excludesBySubquery: Boolean = false
+  var indexOnlyFlag: Boolean = true
 
   override def receive: Receive = {
     case request : JsValue =>
@@ -70,6 +70,10 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           val mode: Option[String] = (request \ "mode").asOpt[String] // offset, interval
           val sliceInterval: Option[Int] = (request \ "sliceInterval").asOpt[Int] // offset, # of days
           val excludes: Option[Boolean] = (request \ "excludes").asOpt[Boolean] // true, false
+          sliceFirstInterval = (request \ "sliceFirstInterval").asOpt[Int].getOrElse(sliceFirstInterval)
+          excludesWay = (request \ "excludesWay").asOpt[String].getOrElse(excludesWay)
+          excludesBySubquery = (request \ "excludesBySubquery").asOpt[Boolean].getOrElse(excludesBySubquery)
+          indexOnlyFlag = (request \ "indexOnly").asOpt[Boolean].getOrElse(indexOnlyFlag)
 
           val sqlTemplate: String = genSQLTemplate(keyword, start, end, offset, limit, mode, excludes)
           MyLogger.debug("sqlTemplate = " + sqlTemplate)
@@ -190,8 +194,8 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
 
           out ! Json.toJson(Json.obj("done" -> true))
 
-          queryStatement.close
-          connection.close
+          queryStatement.close()
+          connection.close()
       }
   }
 
@@ -204,17 +208,17 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
     }
   }
 
-  private def genExcludesStatement(keyword: Option[String]) : String = {
+  private def genExcludesStatement(keyword: Option[String], alias: String) : String = {
 
     val tempTableName = genTempTableName(keyword)
 
-    defaultExcludingWay match {
+    excludesWay match {
       case "cid" =>
-        s" t2.cid not in (select distinct cid from $tempTableName) "
+        s" $alias.cid not in (select distinct cid from $tempTableName) "
       case "bucket" =>
         s"""
-           | (width_bucket(t2.x, -173.847656, -65.390625, 1920),
-           | width_bucket(t2.y, 17.644022, 70.377854, 1080))
+           | (width_bucket($alias.x, -173.847656, -65.390625, 1920),
+           | width_bucket($alias.y, 17.644022, 70.377854, 1080))
            | not in (select distinct bx, by from $tempTableName)
          """.stripMargin
     }
@@ -224,7 +228,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
 
     val tempTableName = genTempTableName(keyword)
 
-    defaultExcludingWay match {
+    excludesWay match {
       case "cid" =>
         s"""
            |create temp table $tempTableName
@@ -256,7 +260,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
       case None =>
     }
 
-    sqlTemplate += " and " + genExcludesStatement(keyword)
+    sqlTemplate += " and " + genExcludesStatement(keyword, "t2")
 
     mode match {
       case Some(sliceMode) =>
@@ -296,12 +300,16 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
          | where 1=1
      """.stripMargin
 
-    if (hint && excludes.getOrElse(false)) {
-      sqlTemplate = "/*+ BitmapScan(t1) */ " + sqlTemplate
+    // TODO - If index only flag == false, could also add hint to force bitmap scan
+    if (indexOnlyFlag) {
+      sqlTemplate = "/*+ IndexOnlyScan(t1) */ " + sqlTemplate
+    }
+    else if (excludes.getOrElse(false)) {
+      sqlTemplate = "/*+ BitmapScan(t1) IndexOnlyScan(t2) */ " + sqlTemplate
     }
 
     if (excludes.getOrElse(false)) {
-      excludingBySubquery match {
+      excludesBySubquery match {
         case true =>
           sqlTemplate += " and t1.id in (" +
             genExcludingSubquery(keyword, start, end, offset, limit, mode, excludes) + ")"
@@ -312,7 +320,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
             case None =>
           }
 
-          sqlTemplate += " and " + genExcludesStatement(keyword)
+          sqlTemplate += " and " + genExcludesStatement(keyword, "t1")
 
           mode match {
             case Some(sliceMode) =>
@@ -383,7 +391,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
     val tempTableName = genTempTableName(keyword)
 
     var insertSQLTemplate: String =
-      defaultExcludingWay match {
+      excludesWay match {
         case "cid" =>
           s"""
              |insert into $tempTableName
@@ -410,7 +418,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
     }
 
     if (excludes.getOrElse(false)) {
-      insertSQLTemplate += " and " + genExcludesStatement(keyword)
+      insertSQLTemplate += " and " + genExcludesStatement(keyword, "t2")
     }
 
     mode match {
@@ -480,7 +488,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
             // This first time rewrite a mini query
             if (thisInterval.isEmpty) {
               //the first query uses a different interval
-              interval = defaultSliceFirstInterval
+              interval = sliceFirstInterval
               // Calculate this end
               if (!end.isEmpty) {
                 if (end.get.isBefore(datasetEnd)) {
@@ -516,6 +524,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
             pIndex += 1
 
             // Calculate interval for next mini query
+            interval = defaultSliceInterval
             val nextEnd: DateTime = thisStart
             var nextStart: DateTime = nextEnd.minusDays(interval)
             if (nextStart.isBefore(start.getOrElse(datasetStart)) || thisStart.isEqual(start.getOrElse(datasetStart))) {
