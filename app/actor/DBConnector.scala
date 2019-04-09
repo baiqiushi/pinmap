@@ -24,7 +24,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
   val xColName: String = "x"
   val yColName: String = "y"
   val idColName: String = "id"
-  val baseTableName: String = "tweets"
+  val baseTableName: String = "ftweets"
   val datasetStart: DateTime = dateTimeFormat.parseDateTime("2017-01-24 00:00:00.000")
   val datasetEnd: DateTime = dateTimeFormat.parseDateTime("2017-09-10 00:00:00.000")
   TimeZone.setDefault(TimeZone.getTimeZone("GMT"))
@@ -34,6 +34,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
   var excludesWay: String = "bucket"
   var excludesBySubquery: Boolean = false
   var indexOnlyFlag: Boolean = true
+  var countStar: Boolean = true
 
   override def receive: Receive = {
     case request : JsValue =>
@@ -75,8 +76,9 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           excludesBySubquery = (request \ "excludesBySubquery").asOpt[Boolean].getOrElse(excludesBySubquery)
           indexOnlyFlag = (request \ "indexOnly").asOpt[Boolean].getOrElse(indexOnlyFlag)
           val abandonData: Boolean = (request \ "abandonData").asOpt[Boolean].getOrElse(false)
+          countStar = (request \ "countStar").asOpt[Boolean].getOrElse(false)
 
-          val sqlTemplate: String = genSQLTemplate(keyword, start, end, offset, limit, mode, excludes)
+          var sqlTemplate: String = genSQLTemplate(keyword, start, end, offset, limit, mode, excludes)
           MyLogger.debug("sqlTemplate = " + sqlTemplate)
           val insertTemplate: String = genInsertSQLTemplate(keyword, start, end, offset, limit, mode, excludes)
           MyLogger.debug("insertTemplate = " + insertTemplate)
@@ -140,16 +142,26 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
 
             MyLogger.debug("[DBConnector] DB done. T4 + T5 =  " + (t5 - t4) / 1000.0 + "s")
 
-            // Two ways to return result
-            val (data, length) = (request \ "byArray").asOpt[Boolean] match {
+            val (data, length) = countStar match {
+              case true =>
+                getCountStar(resultSet)
+              case false =>
+                // Two ways to return result
+                val (tData, tLength) = (request \ "byArray").asOpt[Boolean] match {
+                  case Some(true) =>
+                    // Return result by array - all coordinates of all records in one array
+                    genDataByArray (resultSet)
 
-              case Some(true) =>
-                // Return result by array - all coordinates of all records in one array
-                genDataByArray(resultSet)
-
-              case _ =>
-                // Return result by JSON
-                genDataByJson(resultSet)
+                  case _ =>
+                    // Return result by JSON
+                    genDataByJson (resultSet)
+                }
+                abandonData match {
+                  case true =>
+                    (Json.obj(), tLength)
+                  case false =>
+                    (tData, tLength)
+                }
             }
 
             val T6 = System.currentTimeMillis() - t5
@@ -168,9 +180,8 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
 
             val t6 = System.currentTimeMillis()
 
-            val fData = if (abandonData) Json.obj() else data
             val responseJson: JsObject = Json.obj(
-              "data" -> fData,
+              "data" -> data,
               "length" -> length,
               "t1" -> JsNumber(t1),
               "T2" -> JsNumber(t2 - t1),
@@ -302,12 +313,20 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
          | where 1=1
      """.stripMargin
 
-    // TODO - If index only flag == false, could also add hint to force bitmap scan
-    if (indexOnlyFlag) {
-      sqlTemplate = "/*+ IndexOnlyScan(t1) */ " + sqlTemplate
+    if (countStar) {
+      sqlTemplate = "select count(*) from (" + sqlTemplate
     }
-    else if (excludes.getOrElse(false)) {
-      sqlTemplate = "/*+ BitmapScan(t1) IndexOnlyScan(t2) */ " + sqlTemplate
+
+    indexOnlyFlag match {
+      case true =>
+        sqlTemplate = "/*+ IndexOnlyScan(t1) */ " + sqlTemplate
+      case false =>
+        excludes.getOrElse(false) match {
+          case true =>
+            sqlTemplate = "/*+ BitmapScan(t1) IndexOnlyScan(t2) */ " + sqlTemplate
+          case false =>
+            sqlTemplate = "/*+ BitmapScan(t1) */ " + sqlTemplate
+        }
     }
 
     if (excludes.getOrElse(false)) {
@@ -382,6 +401,10 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
             sqlTemplate += " limit ?"
       }
     }
+
+    if (countStar) {
+      sqlTemplate = sqlTemplate + ") tc"
+    }
     sqlTemplate
   }
 
@@ -412,6 +435,8 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
              | where 1=1
            """.stripMargin
       }
+
+    insertSQLTemplate = "/*+ IndexOnlyScan(t2) */ " + insertSQLTemplate
 
     keyword match {
       case Some(kw) =>
@@ -646,6 +671,12 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
     //println("[DBConnector] In T6, build json T6_2 = " + T6_2/1000.0 + "s")
 
     (resultJsonArray, length)
+  }
+
+  private def getCountStar(resultSet: ResultSet) : (JsObject, Int) = {
+    resultSet.next()
+    val count : Int = resultSet.getInt(1)
+    (Json.obj(), count)
   }
 
   override def preStart(): Unit = {
