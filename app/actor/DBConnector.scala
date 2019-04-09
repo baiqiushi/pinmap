@@ -74,6 +74,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
           excludesWay = (request \ "excludesWay").asOpt[String].getOrElse(excludesWay)
           excludesBySubquery = (request \ "excludesBySubquery").asOpt[Boolean].getOrElse(excludesBySubquery)
           indexOnlyFlag = (request \ "indexOnly").asOpt[Boolean].getOrElse(indexOnlyFlag)
+          val abandonData: Boolean = (request \ "abandonData").asOpt[Boolean].getOrElse(false)
 
           val sqlTemplate: String = genSQLTemplate(keyword, start, end, offset, limit, mode, excludes)
           MyLogger.debug("sqlTemplate = " + sqlTemplate)
@@ -167,8 +168,9 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
 
             val t6 = System.currentTimeMillis()
 
+            val fData = if (abandonData) Json.obj() else data
             val responseJson: JsObject = Json.obj(
-              "data" -> data,
+              "data" -> fData,
               "length" -> length,
               "t1" -> JsNumber(t1),
               "T2" -> JsNumber(t2 - t1),
