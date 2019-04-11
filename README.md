@@ -7,7 +7,8 @@
 
 ## Run
 ```
-sbt "project pinmap" "run 9001"
+export SBT_OPTS="-XX:+CMSClassUnloadingEnabled -XX:MaxPermSize=2G -Xmx2G"
+sbt "project pinmap" "run 9001" sbt run -Dplay.server.http.idleTimeout=3600s
 ```
 
 ## Feature
