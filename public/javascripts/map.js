@@ -152,10 +152,6 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
           $scope.timestamps.T2, // T2
           $scope.timestamps.T3, // T3
           $scope.timestamps.T45, // T4+T5
-          0,  // T4-parse
-          0,  // T4-bind
-          0,  // T4-execute
-          0,  // T5
           $scope.timestamps.T45i, //T-insert
           $scope.timestamps.T6, // T6
           $scope.timestamps.t7 - $scope.timestamps.t6, // T7
