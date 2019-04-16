@@ -6,21 +6,26 @@ import sys.process._
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import org.joda.time.{DateTime, Interval}
 import org.joda.time.format.DateTimeFormat
+import play.api.Configuration
 import play.api.Logger
 import play.api.libs.json._
 
 import scala.collection.mutable.ListBuffer
 
-class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
-  private val logger = Logger("client")
+class DBConnector (val out: ActorRef, val config: Configuration) extends Actor with ActorLogging {
 
   val dateTimeFormat = DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss.SSS")
 
-  val driver: String = "org.postgresql.Driver"
-  val hostname: String = "localhost"
-  val url: String = s"jdbc:postgresql://$hostname:5432/pinmap"
-  val username: String = "postgres"
-  val password: String = "pinmap"
+//  val driver: String = "org.postgresql.Driver"
+//  val hostname: String = "localhost"
+//  val url: String = s"jdbc:postgresql://$hostname:5432/pinmap"
+//  val username: String = "postgres"
+//  val password: String = "pinmap"
+  val driver: String = config.get[String]("postgresql.driver")
+  val url: String = config.get[String]("postgresql.url")
+  val username: String = config.get[String]("postgresql.username")
+  val password: String = config.get[String]("postgresql.password")
+
   val xColName: String = "x"
   val yColName: String = "y"
   val idColName: String = "id"
@@ -323,7 +328,7 @@ class DBConnector (val out: ActorRef) extends Actor with ActorLogging {
       case false =>
         excludes.getOrElse(false) match {
           case true =>
-            sqlTemplate = "/*+ BitmapScan(t1) IndexOnlyScan(t2) */ " + sqlTemplate
+            sqlTemplate = "/*+ NestLoop(t2 t1) IndexScan(t1 ftweets_pkey) IndexOnlyScan(t2) */ " + sqlTemplate
           case false =>
             sqlTemplate = "/*+ BitmapScan(t1) */ " + sqlTemplate
         }
@@ -692,7 +697,7 @@ object DBConnector {
   val startPostgresCMD: String = "sudo -S systemctl start postgresql-9.6"
   val stopPostgresCMD: String = "sudo -S systemctl stop postgresql-9.6"
 
-  def props(out :ActorRef) = Props(new DBConnector(out))
+  def props(out :ActorRef, config: Configuration) = Props(new DBConnector(out, config))
 
   def startDB(): Unit = {
     println("Starting DB ...")
@@ -716,10 +721,12 @@ object MyLogger {
   def debug(msg: String): Unit = {
     if (DEBUG) {
       println(msg)
+      Logger.debug(msg)
     }
   }
 
   def info(msg: String): Unit = {
     println(msg)
+    Logger.info(msg)
   }
 }

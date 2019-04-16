@@ -1,7 +1,7 @@
 package controllers
 
 import javax.inject._
-import java.io.{File, FileInputStream}
+import java.io.{File}
 
 import play.api.mvc._
 import play.api.libs.json.{JsValue}
@@ -40,7 +40,7 @@ class HomeController @Inject()(cc: ControllerComponents,
   def ws = WebSocket.accept[JsValue, JsValue] { request =>
     ActorFlow.actorRef { out =>
       //PointsLoader.props(out, pointsDataFile)
-      DBConnector.props(out)
+      DBConnector.props(out, config)
     }
   }
 }
