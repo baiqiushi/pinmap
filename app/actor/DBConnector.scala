@@ -328,7 +328,12 @@ class DBConnector (val out: ActorRef, val config: Configuration) extends Actor w
       case false =>
         excludes.getOrElse(false) match {
           case true =>
-            sqlTemplate = "/*+ NestLoop(t2 t1) IndexScan(t1 ftweets_pkey) IndexOnlyScan(t2) */ " + sqlTemplate
+            excludesBySubquery match {
+              case true =>
+                sqlTemplate = "/*+ NestLoop(t2 t1) IndexScan(t1 ftweets_pkey) IndexOnlyScan(t2) */ " + sqlTemplate
+              case false =>
+                sqlTemplate = "/*+ BitmapScan(t1) */ " + sqlTemplate
+            }
           case false =>
             sqlTemplate = "/*+ BitmapScan(t1) */ " + sqlTemplate
         }
