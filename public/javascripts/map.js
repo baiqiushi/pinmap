@@ -52,15 +52,25 @@ angular.module("pinmap.map", ["leaflet-directive", "pinmap.common"])
     };
 
     // setting default map styles, zoom level, etc.
+    // angular.extend($scope, {
+    //   tiles: {
+    //     name: 'Mapbox',
+    //     url: 'https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token={accessToken}',
+    //     type: 'xyz',
+    //     options: {
+    //       accessToken: 'pk.eyJ1IjoiamVyZW15bGkiLCJhIjoiY2lrZ2U4MWI4MDA4bHVjajc1am1weTM2aSJ9.JHiBmawEKGsn3jiRK_d0Gw',
+    //       id: 'jeremyli.p6f712pj'
+    //     }
+    //   },
+    //   controls: {
+    //     custom: []
+    //   }
+    // });
     angular.extend($scope, {
       tiles: {
-        name: 'Mapbox',
-        url: 'https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token={accessToken}',
-        type: 'xyz',
-        options: {
-          accessToken: 'pk.eyJ1IjoiamVyZW15bGkiLCJhIjoiY2lrZ2U4MWI4MDA4bHVjajc1am1weTM2aSJ9.JHiBmawEKGsn3jiRK_d0Gw',
-          id: 'jeremyli.p6f712pj'
-        }
+        name: 'OpenStreetMap',
+        url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        attribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
       },
       controls: {
         custom: []

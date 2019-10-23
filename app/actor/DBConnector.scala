@@ -29,9 +29,9 @@ class DBConnector (val out: ActorRef, val config: Configuration) extends Actor w
   val xColName: String = "x"
   val yColName: String = "y"
   val idColName: String = "id"
-  val baseTableName: String = "ftweets"
-  val datasetStart: DateTime = dateTimeFormat.parseDateTime("2017-01-24 00:00:00.000")
-  val datasetEnd: DateTime = dateTimeFormat.parseDateTime("2017-09-10 00:00:00.000")
+  val baseTableName: String = "tweets"
+  val datasetStart: DateTime = dateTimeFormat.parseDateTime("2015-11-17 21:33:26.000")
+  val datasetEnd: DateTime = dateTimeFormat.parseDateTime("2017-01-09 18:00:55.000")
   TimeZone.setDefault(TimeZone.getTimeZone("GMT"))
   var defaultSliceInterval: Int = 30
   var sliceFirstInterval: Int = 3
